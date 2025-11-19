@@ -2,15 +2,15 @@
 #
 # NetSwift 2.0 Installer
 # Description: Automated deployment for NetSwift network management system
-# Author: Mansour El Sayeh
-# Version: 2.0.0
+# Author: Mansour Elsayeh
+# Version: 2.0.4
 #
 
 #═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.0.1"
+readonly SCRIPT_VERSION="2.0.4"
 readonly INSTALL_DIR="/opt/netswift"
 readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/main"
 readonly LOG_FILE="/var/log/netswift-install.log"
@@ -159,6 +159,56 @@ docker_compose() {
         docker compose "$@"
     else
         docker-compose "$@"
+    fi
+}
+
+#═══════════════════════════════════════════════════════════════════════════
+# TIMEZONE DETECTION
+#═══════════════════════════════════════════════════════════════════════════
+
+get_host_timezone() {
+    local tz=""
+    
+    # Method 1: Use timedatectl (systemd systems)
+    if command_exists timedatectl; then
+        tz=$(timedatectl show -p Timezone --value 2>/dev/null)
+    fi
+    
+    # Method 2: Read from /etc/timezone
+    if [[ -z "${tz}" ]] && [[ -f /etc/timezone ]]; then
+        tz=$(cat /etc/timezone 2>/dev/null)
+    fi
+    
+    # Method 3: Parse from /etc/localtime symlink
+    if [[ -z "${tz}" ]] && [[ -L /etc/localtime ]]; then
+        tz=$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')
+    fi
+    
+    # Method 4: Use date command as fallback
+    if [[ -z "${tz}" ]]; then
+        tz=$(date +%Z 2>/dev/null)
+    fi
+    
+    # Default fallback
+    if [[ -z "${tz}" ]]; then
+        tz="UTC"
+    fi
+    
+    echo "${tz}"
+}
+
+configure_timezone() {
+    local host_tz
+    host_tz=$(get_host_timezone)
+    
+    log_info "Detected host timezone: ${host_tz}"
+    
+    # Replace placeholder in docker-compose.yml
+    if [[ -f "${INSTALL_DIR}/docker-compose.yml" ]]; then
+        sed -i "s|TZ=HOST_TIMEZONE|TZ=${host_tz}|g" "${INSTALL_DIR}/docker-compose.yml"
+        log_success "Configured containers to use timezone: ${host_tz}"
+    else
+        log_warning "docker-compose.yml not found, skipping timezone configuration"
     fi
 }
 
@@ -468,13 +518,16 @@ pull_image_with_retry() {
     local retry_delay=10
     local attempt=1
     
+    # Set Docker progress output to plain for better logging
+    export BUILDKIT_PROGRESS=plain
+    
     while [[ ${attempt} -le ${max_retries} ]]; do
         echo
         log_info "Pulling ${image} (attempt ${attempt}/${max_retries})..."
         echo
         
-        # Let Docker show its native progress bars
-        if timeout 600 docker pull "${image}"; then
+        # Let Docker show its native progress output
+        if timeout 600 docker pull "${image}" 2>&1; then
             echo
             log_success "Successfully pulled ${image}"
             return 0
@@ -483,7 +536,7 @@ pull_image_with_retry() {
             if [[ ${attempt} -lt ${max_retries} ]]; then
                 log_warning "Failed to pull ${image}. Retrying in ${retry_delay} seconds..."
                 sleep ${retry_delay}
-                # Exponential backoff (10s, 20s, 40s, 80s, 160s, 320s)
+                # Exponential backoff
                 retry_delay=$((retry_delay * 2))
                 ((attempt++))
             else
@@ -549,64 +602,9 @@ deploy_containers() {
     
     while [[ ${attempt} -le ${max_retries} ]]; do
         echo
-        if docker_compose up -d; then
+        if docker_compose up -d 2>&1; then
             echo
             log_success "Containers started successfully"
-            return 0
-        else
-            if [[ ${attempt} -lt ${max_retries} ]]; then
-                log_warning "Start failed. Retrying in 5 seconds..."
-                sleep 5
-                ((attempt++))
-            else
-                log_error "Failed to start containers after ${max_retries} attempts"
-                log_info "Check logs with: cd ${INSTALL_DIR} && docker compose logs"
-                return 1
-            fi
-        fi
-    done
-}
-deploy_containers() {
-    log_info "Pulling Docker images (this may take several minutes)..."
-    echo
-    
-    # Pull backend image
-    log_info "Step 1/2: Pulling NetSwift backend image..."
-    if ! pull_image_with_retry "${DOCKER_IMAGE}:${DOCKER_TAG}"; then
-        log_error "Failed to pull backend image"
-        log_info ""
-        log_info "You can try manually later:"
-        log_info "  cd ${INSTALL_DIR}"
-        log_info "  docker pull ${DOCKER_IMAGE}:${DOCKER_TAG}"
-        log_info "  docker compose up -d"
-        return 1
-    fi
-    
-    echo
-    
-    # Pull Appsmith image (large image, may take time)
-    log_info "Step 2/2: Pulling Appsmith image (large ~500MB, may take time)..."
-    if ! pull_image_with_retry "${APPSMITH_IMAGE}"; then
-        log_error "Failed to pull Appsmith image"
-        log_info ""
-        log_info "You can try manually later:"
-        log_info "  cd ${INSTALL_DIR}"
-        log_info "  docker pull ${APPSMITH_IMAGE}"
-        log_info "  docker compose up -d"
-        return 1
-    fi
-    
-    echo
-    log_success "All images pulled successfully"
-    
-    log_info "Starting containers..."
-    
-    local max_retries=3
-    local attempt=1
-    
-    while [[ ${attempt} -le ${max_retries} ]]; do
-        if docker_compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
-            log_success "Containers started"
             return 0
         else
             if [[ ${attempt} -lt ${max_retries} ]]; then
@@ -881,6 +879,10 @@ EOF
     
     log_step "5/11" "Downloading configuration files"
     download_config_files
+    
+    # Configure timezone dynamically
+    log_info "Configuring timezone..."
+    configure_timezone
     
     log_step "6/11" "Docker Hub authentication"
     docker_hub_login
