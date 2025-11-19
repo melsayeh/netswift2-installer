@@ -7,10 +7,9 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
     environment:
       - PYTHONUNBUFFERED=1
+      - TZ=HOST_TIMEZONE
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
@@ -28,11 +27,10 @@ services:
     volumes:
       - appsmith_data:/appsmith-stacks
       - ./netswift.json:/tmp/netswift.json:ro
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
-    restart: unless-stopped
     environment:
       - APPSMITH_DISABLE_TELEMETRY=true
+      - TZ=HOST_TIMEZONE
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/api/v1/health"]
       interval: 30s
