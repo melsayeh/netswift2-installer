@@ -464,8 +464,8 @@ configure_selinux() {
 
 pull_image_with_retry() {
     local image="$1"
-    local max_retries=3
-    local retry_delay=10
+    local max_retries=7
+    local retry_delay=7
     local attempt=1
     
     while [[ ${attempt} -le ${max_retries} ]]; do
