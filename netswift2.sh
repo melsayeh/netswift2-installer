@@ -164,13 +164,18 @@ docker_compose() {
 
 import_appsmith_application() {
     log_step "11/11" "Importing NetSwift application (netswift.json)"
-
-    # Use docker compose exec to run the import command inside the appsmith container.
-    # NOTE: You may need to replace 'appsmithctl import-app-from-path' with the exact 
-    # API call or command if your Appsmith version uses a different method.
+    
+    # Appsmith's application layer takes a moment to fully initialize after the healthcheck passes.
+    log_info "Adding 120-second delay to ensure Appsmith API is fully initialized..."
+    sleep 120 
+    
+    # CRITICAL FIX: Use the Docker Compose SERVICE NAME 'appsmith' instead of the container name 'netswift-appsmith'.
     # The file is mounted at /tmp/netswift.json.
-    if ! docker compose exec netswift-appsmith bash -c 'curl -X POST -H "Content-Type: application/json" -F "file=@/tmp/netswift.json" http://localhost/api/v1/applications/import --fail -sS' &>> "${LOG_FILE}"; then
+    IMPORT_COMMAND='curl -X POST -H "Content-Type: application/json" -F "file=@/tmp/netswift.json" http://localhost/api/v1/applications/import --fail -sS'
+
+    if ! docker compose exec appsmith bash -c "${IMPORT_COMMAND}" &>> "${LOG_FILE}"; then
         log_error "Failed to import netswift.json application."
+        log_error "The Appsmith container may have stopped or the import command requires manual authentication setup."
         exit 1
     else
         log_success "Successfully imported netswift.json application."
