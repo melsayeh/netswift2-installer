@@ -3,7 +3,7 @@
 # NetSwift 2.0 Installer
 # Description: Automated deployment for NetSwift network management system
 # Author: Mansour Elsayeh
-# Version: 2.0.4
+# Version: 2.0.5
 #
 
 #═══════════════════════════════════════════════════════════════════════════
