@@ -10,7 +10,7 @@
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.0.4"
+readonly SCRIPT_VERSION="2.0.5"
 readonly INSTALL_DIR="/opt/netswift"
 readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/main"
 readonly LOG_FILE="/var/log/netswift-install.log"
