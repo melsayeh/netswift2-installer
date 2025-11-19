@@ -2,7 +2,7 @@
 #
 # NetSwift 2.0 Installer
 # Description: Automated deployment for NetSwift network management system
-# Author: Mansour El Sayeh
+# Author: Mansour Elsayeh
 # Version: 2.0.0
 #
 
@@ -92,7 +92,7 @@ cleanup() {
         
         if [[ -d "${INSTALL_DIR}" ]]; then
             log_warning "Attempting rollback..."
-            cd "${INSTALL_DIR}" 2>/dev/null && docker-compose down 2>&1 | tee -a "${LOG_FILE}" || true
+            cd "${INSTALL_DIR}" 2>/dev/null && docker_compose down 2>&1 | tee -a "${LOG_FILE}" || true
         fi
     fi
 }
@@ -272,10 +272,19 @@ install_docker() {
 }
 
 install_docker_compose() {
+    # Check for Docker Compose plugin first (modern way)
+    if docker compose version &>/dev/null; then
+        local compose_version
+        compose_version=$(docker compose version --short)
+        log_success "Docker Compose already installed (plugin version ${compose_version})"
+        return 0
+    fi
+    
+    # Check for standalone docker-compose
     if command_exists docker-compose; then
         local compose_version
         compose_version=$(docker-compose --version | cut -d' ' -f4 | tr -d ',')
-        log_success "Docker Compose already installed (version ${compose_version})"
+        log_success "Docker Compose already installed (standalone version ${compose_version})"
         return 0
     fi
     
@@ -299,7 +308,84 @@ install_docker_compose() {
     
     chmod +x /usr/local/bin/docker-compose
     
+    # Create symlink if needed
+    if [[ ! -L /usr/bin/docker-compose ]]; then
+        ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+    fi
+    
     log_success "Docker Compose installed (${compose_version})"
+}
+
+# Helper function to run docker-compose (handles both versions)
+docker_compose() {
+    if docker compose version &>/dev/null; then
+        docker compose "$@"
+    else
+        docker-compose "$@"
+    fi
+}
+
+deploy_containers() {
+    log_info "Pulling Docker images..."
+    
+    if ! docker_compose pull 2>&1 | tee -a "${LOG_FILE}"; then
+        log_error "Failed to pull Docker images"
+        return 1
+    fi
+    
+    log_info "Starting containers..."
+    
+    if ! docker_compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
+        log_error "Failed to start containers"
+        return 1
+    fi
+    
+    log_success "Containers started"
+}
+
+wait_for_services() {
+    log_info "Waiting for services to become healthy..."
+    
+    # Wait for backend
+    log_info "Checking backend service..."
+    local backend_ready=false
+    
+    for i in {1..30}; do
+        if curl -f -s http://localhost:8000/health >/dev/null 2>&1; then
+            log_success "Backend service is healthy"
+            backend_ready=true
+            break
+        fi
+        sleep 2
+        echo -n "."
+    done
+    echo
+    
+    if [[ "${backend_ready}" == false ]]; then
+        log_warning "Backend service did not become healthy"
+        log_info "Checking logs..."
+        docker_compose logs backend | tail -20 | tee -a "${LOG_FILE}"
+    fi
+    
+    # Wait for Appsmith (takes longer)
+    log_info "Waiting for Appsmith (this may take 1-2 minutes)..."
+    local appsmith_ready=false
+    
+    for i in {1..60}; do
+        if curl -f -s http://localhost/api/v1/health >/dev/null 2>&1; then
+            log_success "Appsmith service is healthy"
+            appsmith_ready=true
+            break
+        fi
+        sleep 3
+        [[ $((i % 5)) -eq 0 ]] && echo -n "."
+    done
+    echo
+    
+    if [[ "${appsmith_ready}" == false ]]; then
+        log_warning "Appsmith service is taking longer than expected"
+        log_info "It may still be initializing. Check with: ${INSTALL_DIR}/status.sh"
+    fi
 }
 
 setup_installation_directory() {
