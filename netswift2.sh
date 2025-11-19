@@ -12,7 +12,7 @@
 
 readonly SCRIPT_VERSION="2.0.0"
 readonly INSTALL_DIR="/opt/netswift"
-readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/refs/heads/main/"
+readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/main"
 readonly LOG_FILE="/var/log/netswift-install.log"
 readonly MIN_RAM_GB=4
 readonly MIN_DISK_GB=10
@@ -137,7 +137,6 @@ confirm() {
 }
 
 get_server_ip() {
-    # Try multiple methods to get IP
     local ip
     
     ip=$(hostname -I 2>/dev/null | awk '{print $1}')
@@ -151,6 +150,15 @@ get_server_ip() {
     fi
     
     echo "${ip}"
+}
+
+# Helper function to run docker-compose (handles both versions)
+docker_compose() {
+    if docker compose version &>/dev/null; then
+        docker compose "$@"
+    else
+        docker-compose "$@"
+    fi
 }
 
 #═══════════════════════════════════════════════════════════════════════════
@@ -235,7 +243,6 @@ install_docker() {
         docker_version=$(docker --version | cut -d' ' -f3 | tr -d ',')
         log_success "Docker already installed (version ${docker_version})"
         
-        # Ensure Docker is running
         if ! systemctl is-active --quiet docker; then
             log_info "Starting Docker service..."
             systemctl start docker
@@ -246,25 +253,21 @@ install_docker() {
     
     log_info "Installing Docker..."
     
-    # Install prerequisites
     yum install -y yum-utils &>> "${LOG_FILE}" || {
         log_error "Failed to install yum-utils"
         return 1
     }
     
-    # Add Docker repository
     yum-config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo &>> "${LOG_FILE}" || {
         log_error "Failed to add Docker repository"
         return 1
     }
     
-    # Install Docker
-    yum install -y docker-ce docker-ce-cli containerd.io docker compose-plugin &>> "${LOG_FILE}" || {
+    yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin &>> "${LOG_FILE}" || {
         log_error "Failed to install Docker"
         return 1
     }
     
-    # Start and enable Docker
     systemctl start docker
     systemctl enable docker
     
@@ -290,7 +293,6 @@ install_docker_compose() {
     
     log_info "Installing Docker Compose..."
     
-    # Get latest version
     local compose_version
     compose_version=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4)
     
@@ -299,7 +301,6 @@ install_docker_compose() {
         return 1
     fi
     
-    # Download and install
     curl -L "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-$(uname -s)-$(uname -m)" \
         -o /usr/local/bin/docker-compose 2>> "${LOG_FILE}" || {
         log_error "Failed to download Docker Compose"
@@ -308,84 +309,11 @@ install_docker_compose() {
     
     chmod +x /usr/local/bin/docker-compose
     
-    # Create symlink if needed (FIXED - no space in path)
     if [[ ! -L /usr/bin/docker-compose ]]; then
         ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
     fi
     
     log_success "Docker Compose installed (${compose_version})"
-}
-
-# Helper function to run docker-compose (handles both versions)
-docker_compose() {
-    if docker compose version &>/dev/null; then
-        docker compose "$@"
-    else
-        docker-compose "$@"
-    fi
-}
-
-deploy_containers() {
-    log_info "Pulling Docker images..."
-    
-    if ! docker_compose pull 2>&1 | tee -a "${LOG_FILE}"; then
-        log_error "Failed to pull Docker images"
-        return 1
-    fi
-    
-    log_info "Starting containers..."
-    
-    if ! docker_compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
-        log_error "Failed to start containers"
-        return 1
-    fi
-    
-    log_success "Containers started"
-}
-
-wait_for_services() {
-    log_info "Waiting for services to become healthy..."
-    
-    # Wait for backend
-    log_info "Checking backend service..."
-    local backend_ready=false
-    
-    for i in {1..30}; do
-        if curl -f -s http://localhost:8000/health >/dev/null 2>&1; then
-            log_success "Backend service is healthy"
-            backend_ready=true
-            break
-        fi
-        sleep 2
-        echo -n "."
-    done
-    echo
-    
-    if [[ "${backend_ready}" == false ]]; then
-        log_warning "Backend service did not become healthy"
-        log_info "Checking logs..."
-        docker_compose logs backend | tail -20 | tee -a "${LOG_FILE}"
-    fi
-    
-    # Wait for Appsmith (takes longer)
-    log_info "Waiting for Appsmith (this may take 1-2 minutes)..."
-    local appsmith_ready=false
-    
-    for i in {1..60}; do
-        if curl -f -s http://localhost/api/v1/health >/dev/null 2>&1; then
-            log_success "Appsmith service is healthy"
-            appsmith_ready=true
-            break
-        fi
-        sleep 3
-        [[ $((i % 5)) -eq 0 ]] && echo -n "."
-    done
-    echo
-    
-    if [[ "${appsmith_ready}" == false ]]; then
-        log_warning "Appsmith service is taking longer than expected"
-        log_info "It may still be initializing. Check with: ${INSTALL_DIR}/status.sh"
-    fi
 }
 
 setup_installation_directory() {
@@ -419,7 +347,7 @@ download_config_files() {
     log_info "Downloading configuration files..."
     
     local files=(
-        "docker compose.yml"
+        "docker-compose.yml"
         "netswift.json"
     )
     
@@ -532,14 +460,14 @@ configure_selinux() {
 deploy_containers() {
     log_info "Pulling Docker images..."
     
-    if ! docker compose pull 2>&1 | tee -a "${LOG_FILE}"; then
+    if ! docker_compose pull 2>&1 | tee -a "${LOG_FILE}"; then
         log_error "Failed to pull Docker images"
         return 1
     fi
     
     log_info "Starting containers..."
     
-    if ! docker compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
+    if ! docker_compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
         log_error "Failed to start containers"
         return 1
     fi
@@ -550,7 +478,6 @@ deploy_containers() {
 wait_for_services() {
     log_info "Waiting for services to become healthy..."
     
-    # Wait for backend
     log_info "Checking backend service..."
     local backend_ready=false
     
@@ -568,10 +495,9 @@ wait_for_services() {
     if [[ "${backend_ready}" == false ]]; then
         log_warning "Backend service did not become healthy"
         log_info "Checking logs..."
-        docker compose logs backend | tail -20 | tee -a "${LOG_FILE}"
+        docker_compose logs backend | tail -20 | tee -a "${LOG_FILE}"
     fi
     
-    # Wait for Appsmith (takes longer)
     log_info "Waiting for Appsmith (this may take 1-2 minutes)..."
     local appsmith_ready=false
     
@@ -595,49 +521,66 @@ wait_for_services() {
 create_management_scripts() {
     log_info "Creating management scripts..."
     
-    # Start script
     cat > "${INSTALL_DIR}/start.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
-docker compose up -d
+if docker compose version &>/dev/null; then
+    docker compose up -d
+else
+    docker-compose up -d
+fi
 echo "NetSwift started"
-docker compose ps
 SCRIPT
     
-    # Stop script
     cat > "${INSTALL_DIR}/stop.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
-docker compose down
+if docker compose version &>/dev/null; then
+    docker compose down
+else
+    docker-compose down
+fi
 echo "NetSwift stopped"
 SCRIPT
     
-    # Restart script
     cat > "${INSTALL_DIR}/restart.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
-docker compose restart
+if docker compose version &>/dev/null; then
+    docker compose restart
+else
+    docker-compose restart
+fi
 echo "NetSwift restarted"
-docker compose ps
 SCRIPT
     
-    # Logs script
     cat > "${INSTALL_DIR}/logs.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
-if [[ -n "$1" ]]; then
-    docker compose logs -f "$1"
+if docker compose version &>/dev/null; then
+    if [[ -n "$1" ]]; then
+        docker compose logs -f "$1"
+    else
+        docker compose logs -f
+    fi
 else
-    docker compose logs -f
+    if [[ -n "$1" ]]; then
+        docker-compose logs -f "$1"
+    else
+        docker-compose logs -f
+    fi
 fi
 SCRIPT
     
-    # Status script
     cat > "${INSTALL_DIR}/status.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
 echo "=== Container Status ==="
-docker compose ps
+if docker compose version &>/dev/null; then
+    docker compose ps
+else
+    docker-compose ps
+fi
 echo ""
 echo "=== Service Health ==="
 echo -n "Backend: "
@@ -654,19 +597,20 @@ else
 fi
 SCRIPT
     
-    # Update script
     cat > "${INSTALL_DIR}/update.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
 echo "Pulling latest images..."
-docker compose pull
-echo "Restarting services..."
-docker compose up -d
+if docker compose version &>/dev/null; then
+    docker compose pull
+    docker compose up -d
+else
+    docker-compose pull
+    docker-compose up -d
+fi
 echo "Update complete"
-docker compose ps
 SCRIPT
     
-    # Backup script
     cat > "${INSTALL_DIR}/backup.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
@@ -675,11 +619,10 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 mkdir -p "${BACKUP_DIR}"
 echo "Creating backup..."
 tar -czf "${BACKUP_DIR}/netswift-backup-${TIMESTAMP}.tar.gz" \
-    data/ logs/ docker compose.yml netswift.json
+    data/ logs/ docker-compose.yml netswift.json
 echo "Backup created: ${BACKUP_DIR}/netswift-backup-${TIMESTAMP}.tar.gz"
 SCRIPT
     
-    # Uninstall script
     cat > "${INSTALL_DIR}/uninstall.sh" << 'SCRIPT'
 #!/bin/bash
 echo "This will completely remove NetSwift including all data"
@@ -690,7 +633,11 @@ if [[ "${confirm}" != "yes" ]]; then
 fi
 cd /opt/netswift || exit 1
 echo "Stopping containers..."
-docker compose down -v
+if docker compose version &>/dev/null; then
+    docker compose down -v
+else
+    docker-compose down -v
+fi
 cd /
 echo "Removing installation..."
 rm -rf /opt/netswift
@@ -738,7 +685,6 @@ print_summary() {
     echo
     echo -e "${CYAN}${BOLD}Support:${NC}"
     echo -e "  Log file:  ${LOG_FILE}"
-    echo -e "  Docs:      https://github.com/melsayeh/netswift-installer"
     echo
     echo -e "${GREEN}${BOLD}═══════════════════════════════════════════════════════════════════${NC}"
     echo
@@ -749,10 +695,8 @@ print_summary() {
 #═══════════════════════════════════════════════════════════════════════════
 
 main() {
-    # Ensure we fail on any error from here on
     set -euo pipefail
     
-    # Clear screen and show banner
     clear
     echo -e "${BLUE}${BOLD}"
     cat << "EOF"
@@ -768,54 +712,42 @@ EOF
     log_info "Log file: ${LOG_FILE}"
     echo
     
-    # Pre-flight checks
     log_step "1/11" "Pre-flight checks"
     check_root
     check_os
     check_system_resources
     check_network
     
-    # Install Docker
     log_step "2/11" "Installing Docker"
     install_docker
     
-    # Install Docker Compose
     log_step "3/11" "Installing Docker Compose"
     install_docker_compose
     
-    # Setup directories
     log_step "4/11" "Setting up installation directory"
     setup_installation_directory
     
-    # Download configuration
     log_step "5/11" "Downloading configuration files"
     download_config_files
     
-    # Docker Hub authentication
     log_step "6/11" "Docker Hub authentication"
     docker_hub_login
     
-    # Configure firewall
     log_step "7/11" "Configuring firewall"
     configure_firewall
     
-    # Configure SELinux
     log_step "8/11" "Configuring SELinux"
     configure_selinux
     
-    # Deploy containers
     log_step "9/11" "Deploying containers"
     deploy_containers
     
-    # Wait for services
     log_step "10/11" "Waiting for services"
     wait_for_services
     
-    # Create management scripts
     log_step "11/11" "Creating management scripts"
     create_management_scripts
     
-    # Print summary
     print_summary
     
     log_success "Installation completed successfully!"
@@ -823,5 +755,4 @@ EOF
     return 0
 }
 
-# Run main installation
 main "$@"
