@@ -12,7 +12,7 @@
 
 readonly SCRIPT_VERSION="2.0.0"
 readonly INSTALL_DIR="/opt/netswift"
-readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift-installer/refs/heads/main"
+readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/refs/heads/main/"
 readonly LOG_FILE="/var/log/netswift-install.log"
 readonly MIN_RAM_GB=4
 readonly MIN_DISK_GB=10
