@@ -162,25 +162,35 @@ docker_compose() {
     fi
 }
 
-import_appsmith_application() {
-    log_step "11/11" "Importing NetSwift application (netswift.json)"
-    
-    # Appsmith's application layer takes a moment to fully initialize after the healthcheck passes.
-    log_info "Adding 120-second delay to ensure Appsmith API is fully initialized..."
-    sleep 120 
-    
-    # CRITICAL FIX: Use the Docker Compose SERVICE NAME 'appsmith' instead of the container name 'netswift-appsmith'.
-    # The file is mounted at /tmp/netswift.json.
-    IMPORT_COMMAND='curl -X POST -H "Content-Type: application/json" -F "file=@/tmp/netswift.json" http://localhost/api/v1/applications/import --fail -sS'
+# netswift-appsmith is the container name defined in docker-compose.yml
+APPSMITH_CONTAINER="netswift-appsmith"
+APP_FILE_PATH="/tmp/netswift.json"
 
-    if ! docker compose exec appsmith bash -c "${IMPORT_COMMAND}" &>> "${LOG_FILE}"; then
-        log_error "Failed to import netswift.json application."
-        log_error "The Appsmith container may have stopped or the import command requires manual authentication setup."
-        exit 1
-    else
+# Function to import Appsmith application by executing a command inside the container
+import_netswift_app() {
+    log_step "11/12" "Importing NetSwift application (${APP_FILE_PATH})"
+
+    # CRITICAL FIX: The import must be executed inside the container as root
+    # using a privileged utility to bypass web-level authentication.
+    # A 120-second delay ensures the Appsmith service is fully online.
+    log_info "Adding 120-second delay to ensure Appsmith API is fully initialized..."
+    sleep 120
+
+    log_info "Attempting unauthenticated application import via internal utility..."
+    
+    # The command below executes an internal Python script to force the JSON import.
+    if docker_compose exec -T "${APPSMITH_CONTAINER}" python /opt/appsmith/app/rts_server/util/upload_app.py "${APP_FILE_PATH}" &>> "$LOG_FILE"; then
         log_success "Successfully imported netswift.json application."
+    else
+        log_error "Failed to import netswift.json application."
+        log_error "The Appsmith container may have stopped or the internal import utility failed."
+        log_error "Installation failed with exit code: 1"
+        log_info "Check log file: ${LOG_FILE}"
+        rollback
+        exit 1
     fi
 }
+
 #═══════════════════════════════════════════════════════════════════════════
 # TIMEZONE DETECTION
 #═══════════════════════════════════════════════════════════════════════════
