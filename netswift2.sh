@@ -280,10 +280,10 @@ install_docker_compose() {
         return 0
     fi
     
-    # Check for standalone docker compose
-    if command_exists docker compose; then
+    # Check for standalone docker-compose
+    if command_exists docker-compose; then
         local compose_version
-        compose_version=$(docker compose --version | cut -d' ' -f4 | tr -d ',')
+        compose_version=$(docker-compose --version | cut -d' ' -f4 | tr -d ',')
         log_success "Docker Compose already installed (standalone version ${compose_version})"
         return 0
     fi
@@ -300,28 +300,28 @@ install_docker_compose() {
     fi
     
     # Download and install
-    curl -L "https://github.com/docker/compose/releases/download/${compose_version}/docker compose-$(uname -s)-$(uname -m)" \
-        -o /usr/local/bin/docker compose 2>> "${LOG_FILE}" || {
+    curl -L "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-$(uname -s)-$(uname -m)" \
+        -o /usr/local/bin/docker-compose 2>> "${LOG_FILE}" || {
         log_error "Failed to download Docker Compose"
         return 1
     }
     
-    chmod +x /usr/local/bin/docker compose
+    chmod +x /usr/local/bin/docker-compose
     
-    # Create symlink if needed
-    if [[ ! -L /usr/bin/docker compose ]]; then
-        ln -sf /usr/local/bin/docker compose /usr/bin/docker compose
+    # Create symlink if needed (FIXED - no space in path)
+    if [[ ! -L /usr/bin/docker-compose ]]; then
+        ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
     fi
     
     log_success "Docker Compose installed (${compose_version})"
 }
 
-# Helper function to run docker compose (handles both versions)
+# Helper function to run docker-compose (handles both versions)
 docker_compose() {
     if docker compose version &>/dev/null; then
         docker compose "$@"
     else
-        docker compose "$@"
+        docker-compose "$@"
     fi
 }
 
