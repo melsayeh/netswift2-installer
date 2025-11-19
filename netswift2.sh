@@ -259,7 +259,7 @@ install_docker() {
     }
     
     # Install Docker
-    yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin &>> "${LOG_FILE}" || {
+    yum install -y docker-ce docker-ce-cli containerd.io docker compose-plugin &>> "${LOG_FILE}" || {
         log_error "Failed to install Docker"
         return 1
     }
@@ -280,10 +280,10 @@ install_docker_compose() {
         return 0
     fi
     
-    # Check for standalone docker-compose
-    if command_exists docker-compose; then
+    # Check for standalone docker compose
+    if command_exists docker compose; then
         local compose_version
-        compose_version=$(docker-compose --version | cut -d' ' -f4 | tr -d ',')
+        compose_version=$(docker compose --version | cut -d' ' -f4 | tr -d ',')
         log_success "Docker Compose already installed (standalone version ${compose_version})"
         return 0
     fi
@@ -300,28 +300,28 @@ install_docker_compose() {
     fi
     
     # Download and install
-    curl -L "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-$(uname -s)-$(uname -m)" \
-        -o /usr/local/bin/docker-compose 2>> "${LOG_FILE}" || {
+    curl -L "https://github.com/docker/compose/releases/download/${compose_version}/docker compose-$(uname -s)-$(uname -m)" \
+        -o /usr/local/bin/docker compose 2>> "${LOG_FILE}" || {
         log_error "Failed to download Docker Compose"
         return 1
     }
     
-    chmod +x /usr/local/bin/docker-compose
+    chmod +x /usr/local/bin/docker compose
     
     # Create symlink if needed
-    if [[ ! -L /usr/bin/docker-compose ]]; then
-        ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+    if [[ ! -L /usr/bin/docker compose ]]; then
+        ln -sf /usr/local/bin/docker compose /usr/bin/docker compose
     fi
     
     log_success "Docker Compose installed (${compose_version})"
 }
 
-# Helper function to run docker-compose (handles both versions)
+# Helper function to run docker compose (handles both versions)
 docker_compose() {
     if docker compose version &>/dev/null; then
         docker compose "$@"
     else
-        docker-compose "$@"
+        docker compose "$@"
     fi
 }
 
@@ -419,7 +419,7 @@ download_config_files() {
     log_info "Downloading configuration files..."
     
     local files=(
-        "docker-compose.yml"
+        "docker compose.yml"
         "netswift.json"
     )
     
@@ -532,14 +532,14 @@ configure_selinux() {
 deploy_containers() {
     log_info "Pulling Docker images..."
     
-    if ! docker-compose pull 2>&1 | tee -a "${LOG_FILE}"; then
+    if ! docker compose pull 2>&1 | tee -a "${LOG_FILE}"; then
         log_error "Failed to pull Docker images"
         return 1
     fi
     
     log_info "Starting containers..."
     
-    if ! docker-compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
+    if ! docker compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
         log_error "Failed to start containers"
         return 1
     fi
@@ -568,7 +568,7 @@ wait_for_services() {
     if [[ "${backend_ready}" == false ]]; then
         log_warning "Backend service did not become healthy"
         log_info "Checking logs..."
-        docker-compose logs backend | tail -20 | tee -a "${LOG_FILE}"
+        docker compose logs backend | tail -20 | tee -a "${LOG_FILE}"
     fi
     
     # Wait for Appsmith (takes longer)
@@ -599,16 +599,16 @@ create_management_scripts() {
     cat > "${INSTALL_DIR}/start.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
-docker-compose up -d
+docker compose up -d
 echo "NetSwift started"
-docker-compose ps
+docker compose ps
 SCRIPT
     
     # Stop script
     cat > "${INSTALL_DIR}/stop.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
-docker-compose down
+docker compose down
 echo "NetSwift stopped"
 SCRIPT
     
@@ -616,9 +616,9 @@ SCRIPT
     cat > "${INSTALL_DIR}/restart.sh" << 'SCRIPT'
 #!/bin/bash
 cd /opt/netswift || exit 1
-docker-compose restart
+docker compose restart
 echo "NetSwift restarted"
-docker-compose ps
+docker compose ps
 SCRIPT
     
     # Logs script
@@ -626,9 +626,9 @@ SCRIPT
 #!/bin/bash
 cd /opt/netswift || exit 1
 if [[ -n "$1" ]]; then
-    docker-compose logs -f "$1"
+    docker compose logs -f "$1"
 else
-    docker-compose logs -f
+    docker compose logs -f
 fi
 SCRIPT
     
@@ -637,7 +637,7 @@ SCRIPT
 #!/bin/bash
 cd /opt/netswift || exit 1
 echo "=== Container Status ==="
-docker-compose ps
+docker compose ps
 echo ""
 echo "=== Service Health ==="
 echo -n "Backend: "
@@ -659,11 +659,11 @@ SCRIPT
 #!/bin/bash
 cd /opt/netswift || exit 1
 echo "Pulling latest images..."
-docker-compose pull
+docker compose pull
 echo "Restarting services..."
-docker-compose up -d
+docker compose up -d
 echo "Update complete"
-docker-compose ps
+docker compose ps
 SCRIPT
     
     # Backup script
@@ -675,7 +675,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 mkdir -p "${BACKUP_DIR}"
 echo "Creating backup..."
 tar -czf "${BACKUP_DIR}/netswift-backup-${TIMESTAMP}.tar.gz" \
-    data/ logs/ docker-compose.yml netswift.json
+    data/ logs/ docker compose.yml netswift.json
 echo "Backup created: ${BACKUP_DIR}/netswift-backup-${TIMESTAMP}.tar.gz"
 SCRIPT
     
@@ -690,7 +690,7 @@ if [[ "${confirm}" != "yes" ]]; then
 fi
 cd /opt/netswift || exit 1
 echo "Stopping containers..."
-docker-compose down -v
+docker compose down -v
 cd /
 echo "Removing installation..."
 rm -rf /opt/netswift
