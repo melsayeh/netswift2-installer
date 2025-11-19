@@ -3,14 +3,14 @@
 # NetSwift 2.0 Installer
 # Description: Automated deployment for NetSwift network management system
 # Author: Mansour Elsayeh
-# Version: 2.0.5
+# Version: 2.0.6
 #
 
 #═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.0.5"
+readonly SCRIPT_VERSION="2.0.6"
 readonly INSTALL_DIR="/opt/netswift"
 readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/main"
 readonly LOG_FILE="/var/log/netswift-install.log"
@@ -929,7 +929,7 @@ EOF
     wait_for_services
     # ADD THE NEW IMPORT STEP HERE
     log_step "11/11" "Importing NetSwift application"
-    import_appsmith_application 
+    import_netswift_app
     
     log_step "11/11" "Creating management scripts"
     create_management_scripts
