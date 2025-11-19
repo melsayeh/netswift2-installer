@@ -3,14 +3,14 @@
 # NetSwift 2.0 Installer
 # Description: Automated deployment for NetSwift network management system
 # Author: Mansour Elsayeh
-# Version: 2.0.7
+# Version: 2.0.8
 #
 
 #═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.0.7"
+readonly SCRIPT_VERSION="2.0.8"
 readonly INSTALL_DIR="/opt/netswift"
 readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/main"
 readonly LOG_FILE="/var/log/netswift-install.log"
@@ -195,7 +195,7 @@ wait_for_appsmith_api() {
     while [ "${RETRY_COUNT}" -lt "${MAX_RETRIES}" ]; do
         # Use a silent curl call inside the container to check the API status
         # We use the service name 'netswift-appsmith' instead of localhost for internal network communication
-        if docker_compose exec -T "${APPSMITH_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" "http://netswift-appsmith/api/v1/health" | grep -q "200"; then
+        if docker_compose exec -T "${APPSMITH_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" "http://172.21.0.1/api/v1/health" | grep -q "200"; then
             log_success "Appsmith API is ready."
             return 0
         fi
