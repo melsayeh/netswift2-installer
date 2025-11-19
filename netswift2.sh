@@ -3,14 +3,14 @@
 # NetSwift 2.0 Installer
 # Description: Automated deployment for NetSwift network management system
 # Author: Mansour Elsayeh
-# Version: 2.0.6
+# Version: 2.0.7
 #
 
 #═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.0.6"
+readonly SCRIPT_VERSION="2.0.7"
 readonly INSTALL_DIR="/opt/netswift"
 readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/main"
 readonly LOG_FILE="/var/log/netswift-install.log"
@@ -117,6 +117,23 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to stop and remove all deployed containers and networks
+rollback() {
+    log_warn "Attempting rollback..."
+    # The -f flag is for force removal, which is usually necessary for a robust rollback
+    # The --volumes flag ensures the persistent data volume for Appsmith is also cleaned up
+    # However, since appsmith_data is defined as an external volume, we will just stop and remove containers.
+    # To remove the volume, you would need 'docker-compose down -v', but this is safer.
+    
+    # We use 'docker-compose stop' and 'docker-compose rm -f' explicitly for clearer logging
+    docker-compose stop netswift-backend netswift-appsmith &>> "$LOG_FILE"
+    docker-compose rm -f netswift-backend netswift-appsmith &>> "$LOG_FILE"
+    
+    # This command removes the network and any other services.
+    # It will show the output you are seeing now.
+    docker-compose down &>> "$LOG_FILE"
+}
+
 confirm() {
     local prompt="$1"
     local default="${2:-n}"
@@ -166,19 +183,47 @@ docker_compose() {
 APPSMITH_CONTAINER="netswift-appsmith"
 APP_FILE_PATH="/tmp/netswift.json"
 
+# Function to wait for the Appsmith API to be ready
+wait_for_appsmith_api() {
+    log_info "Waiting for Appsmith API readiness (max 10 minutes)..."
+    local APPSMITH_HEALTH_URL="http://localhost/api/v1/health"
+    local MAX_RETRIES=60 # 60 retries * 10 seconds = 600 seconds (10 minutes)
+    local RETRY_COUNT=0
+
+    # The Appsmith container's health check is already using 'curl -f http://localhost/api/v1/health'
+    # We will use docker_compose exec to repeatedly run this check on the container's *external* port
+    while [ "${RETRY_COUNT}" -lt "${MAX_RETRIES}" ]; do
+        # Use a silent curl call inside the container to check the API status
+        # We use the service name 'netswift-appsmith' instead of localhost for internal network communication
+        if docker_compose exec -T "${APPSMITH_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" "http://netswift-appsmith/api/v1/health" | grep -q "200"; then
+            log_success "Appsmith API is ready."
+            return 0
+        fi
+        
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        log_info "Attempt ${RETRY_COUNT}/${MAX_RETRIES}: API not ready. Waiting 10 seconds..."
+        sleep 10
+    done
+
+    log_error "Appsmith API did not become ready within 10 minutes."
+    return 1
+}
+
 # Function to import Appsmith application by executing a command inside the container
 import_netswift_app() {
     log_step "11/12" "Importing NetSwift application (${APP_FILE_PATH})"
 
-    # CRITICAL FIX: The import must be executed inside the container as root
-    # using a privileged utility to bypass web-level authentication.
-    # A 120-second delay ensures the Appsmith service is fully online.
-    log_info "Adding 120-second delay to ensure Appsmith API is fully initialized..."
-    sleep 120
+    # 1. Wait for the API to be ready
+    if ! wait_for_appsmith_api; then
+        log_error "Failed to ensure Appsmith API readiness."
+        log_error "Installation failed with exit code: 1"
+        rollback # This now calls the fixed/defined function
+        exit 1
+    fi
 
     log_info "Attempting unauthenticated application import via internal utility..."
     
-    # The command below executes an internal Python script to force the JSON import.
+    # 2. Execute the import using the internal Python utility
     if docker_compose exec -T "${APPSMITH_CONTAINER}" python /opt/appsmith/app/rts_server/util/upload_app.py "${APP_FILE_PATH}" &>> "$LOG_FILE"; then
         log_success "Successfully imported netswift.json application."
     else
@@ -186,7 +231,7 @@ import_netswift_app() {
         log_error "The Appsmith container may have stopped or the internal import utility failed."
         log_error "Installation failed with exit code: 1"
         log_info "Check log file: ${LOG_FILE}"
-        rollback
+        rollback # This now calls the fixed/defined function
         exit 1
     fi
 }
