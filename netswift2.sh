@@ -162,6 +162,20 @@ docker_compose() {
     fi
 }
 
+import_appsmith_application() {
+    log_step "11/11" "Importing NetSwift application (netswift.json)"
+
+    # Use docker compose exec to run the import command inside the appsmith container.
+    # NOTE: You may need to replace 'appsmithctl import-app-from-path' with the exact 
+    # API call or command if your Appsmith version uses a different method.
+    # The file is mounted at /tmp/netswift.json.
+    if ! docker compose exec netswift-appsmith bash -c 'curl -X POST -H "Content-Type: application/json" -F "file=@/tmp/netswift.json" http://localhost/api/v1/applications/import --fail -sS' &>> "${LOG_FILE}"; then
+        log_error "Failed to import netswift.json application."
+        exit 1
+    else
+        log_success "Successfully imported netswift.json application."
+    fi
+}
 #═══════════════════════════════════════════════════════════════════════════
 # TIMEZONE DETECTION
 #═══════════════════════════════════════════════════════════════════════════
@@ -898,6 +912,9 @@ EOF
     
     log_step "10/11" "Waiting for services"
     wait_for_services
+    # ADD THE NEW IMPORT STEP HERE
+    log_step "11/11" "Importing NetSwift application"
+    import_appsmith_application 
     
     log_step "11/11" "Creating management scripts"
     create_management_scripts
