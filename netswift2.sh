@@ -3,14 +3,14 @@
 # NetSwift 2.0 Installer
 # Description: Automated deployment for NetSwift network management system
 # Author: Mansour Elsayeh
-# Version: 2.0.8
+# Version: 2.0.9
 #
 
 #═══════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.0.8"
+readonly SCRIPT_VERSION="2.0.9"
 readonly INSTALL_DIR="/opt/netswift"
 readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/main"
 readonly LOG_FILE="/var/log/netswift-install.log"
@@ -186,16 +186,15 @@ APP_FILE_PATH="/tmp/netswift.json"
 # Function to wait for the Appsmith API to be ready
 wait_for_appsmith_api() {
     log_info "Waiting for Appsmith API readiness (max 10 minutes)..."
-    local APPSMITH_HEALTH_URL="http://localhost/api/v1/health"
     local MAX_RETRIES=60 # 60 retries * 10 seconds = 600 seconds (10 minutes)
     local RETRY_COUNT=0
+    
+    # CRITICAL FIX: Use 'http://localhost' to check the service from within its own container.
+    local APPSMITH_HEALTH_URL="http://localhost/api/v1/health"
 
-    # The Appsmith container's health check is already using 'curl -f http://localhost/api/v1/health'
-    # We will use docker_compose exec to repeatedly run this check on the container's *external* port
     while [ "${RETRY_COUNT}" -lt "${MAX_RETRIES}" ]; do
         # Use a silent curl call inside the container to check the API status
-        # We use the service name 'netswift-appsmith' instead of localhost for internal network communication
-        if docker_compose exec -T "${APPSMITH_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" "http://172.21.0.1/api/v1/health" | grep -q "200"; then
+        if docker_compose exec -T "${APPSMITH_CONTAINER}" curl -s -o /dev/null -w "%{http_code}" "${APPSMITH_HEALTH_URL}" | grep -q "200"; then
             log_success "Appsmith API is ready."
             return 0
         fi
@@ -213,11 +212,11 @@ wait_for_appsmith_api() {
 import_netswift_app() {
     log_step "11/12" "Importing NetSwift application (${APP_FILE_PATH})"
 
-    # 1. Wait for the API to be ready
+    # 1. Wait for the API to be ready using the fixed health check
     if ! wait_for_appsmith_api; then
-        log_error "Failed to ensure Appsmith API readiness."
+        log_error "Failed to ensure Appsmith API readiness. Import aborted."
         log_error "Installation failed with exit code: 1"
-        rollback # This now calls the fixed/defined function
+        rollback
         exit 1
     fi
 
@@ -228,10 +227,10 @@ import_netswift_app() {
         log_success "Successfully imported netswift.json application."
     else
         log_error "Failed to import netswift.json application."
-        log_error "The Appsmith container may have stopped or the internal import utility failed."
+        log_error "The internal import utility failed. The Appsmith base image may have changed."
         log_error "Installation failed with exit code: 1"
         log_info "Check log file: ${LOG_FILE}"
-        rollback # This now calls the fixed/defined function
+        rollback
         exit 1
     fi
 }
