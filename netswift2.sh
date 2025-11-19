@@ -465,25 +465,30 @@ configure_selinux() {
 pull_image_with_retry() {
     local image="$1"
     local max_retries=7
-    local retry_delay=7
+    local retry_delay=10
     local attempt=1
     
     while [[ ${attempt} -le ${max_retries} ]]; do
+        echo
         log_info "Pulling ${image} (attempt ${attempt}/${max_retries})..."
+        echo
         
-        # Use timeout to prevent indefinite hangs
-        if timeout 600 docker pull "${image}" 2>&1 | tee -a "${LOG_FILE}"; then
+        # Let Docker show its native progress bars
+        if timeout 600 docker pull "${image}"; then
+            echo
             log_success "Successfully pulled ${image}"
             return 0
         else
+            echo
             if [[ ${attempt} -lt ${max_retries} ]]; then
                 log_warning "Failed to pull ${image}. Retrying in ${retry_delay} seconds..."
                 sleep ${retry_delay}
-                # Exponential backoff
+                # Exponential backoff (10s, 20s, 40s, 80s, 160s, 320s)
                 retry_delay=$((retry_delay * 2))
                 ((attempt++))
             else
                 log_error "Failed to pull ${image} after ${max_retries} attempts"
+                echo
                 log_info "Common causes:"
                 log_info "  - Network timeout (slow connection)"
                 log_info "  - Docker Hub rate limiting"
@@ -495,6 +500,72 @@ pull_image_with_retry() {
     done
 }
 
+deploy_containers() {
+    log_info "Deploying NetSwift containers..."
+    log_info "This may take several minutes depending on your internet connection"
+    echo
+    
+    # Pull backend image with retries
+    log_info "===================================================================="
+    log_info "STEP 1/2: Pulling NetSwift Backend Image"
+    log_info "===================================================================="
+    
+    if ! pull_image_with_retry "${DOCKER_IMAGE}:${DOCKER_TAG}"; then
+        echo
+        log_error "Failed to pull backend image after 7 attempts"
+        log_info ""
+        log_info "You can try manually later:"
+        log_info "  cd ${INSTALL_DIR}"
+        log_info "  docker pull ${DOCKER_IMAGE}:${DOCKER_TAG}"
+        log_info "  docker compose up -d"
+        return 1
+    fi
+    
+    # Pull Appsmith image with retries
+    echo
+    log_info "===================================================================="
+    log_info "STEP 2/2: Pulling Appsmith Image (~500MB)"
+    log_info "===================================================================="
+    
+    if ! pull_image_with_retry "${APPSMITH_IMAGE}"; then
+        echo
+        log_error "Failed to pull Appsmith image after 7 attempts"
+        log_info ""
+        log_info "You can try manually later:"
+        log_info "  cd ${INSTALL_DIR}"
+        log_info "  docker pull ${APPSMITH_IMAGE}"
+        log_info "  docker compose up -d"
+        return 1
+    fi
+    
+    echo
+    log_success "All images pulled successfully!"
+    echo
+    
+    log_info "Starting containers..."
+    
+    local max_retries=3
+    local attempt=1
+    
+    while [[ ${attempt} -le ${max_retries} ]]; do
+        echo
+        if docker_compose up -d; then
+            echo
+            log_success "Containers started successfully"
+            return 0
+        else
+            if [[ ${attempt} -lt ${max_retries} ]]; then
+                log_warning "Start failed. Retrying in 5 seconds..."
+                sleep 5
+                ((attempt++))
+            else
+                log_error "Failed to start containers after ${max_retries} attempts"
+                log_info "Check logs with: cd ${INSTALL_DIR} && docker compose logs"
+                return 1
+            fi
+        fi
+    done
+}
 deploy_containers() {
     log_info "Pulling Docker images (this may take several minutes)..."
     echo
