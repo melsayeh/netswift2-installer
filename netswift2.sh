@@ -2,7 +2,7 @@
 #
 # NetSwift 2.0 Installer
 # Description: Automated deployment for NetSwift network management system
-# Author: Mansour Elsayeh
+# Author: Mansour El Sayeh
 # Version: 2.0.0
 #
 
@@ -10,7 +10,7 @@
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="2.0.0"
+readonly SCRIPT_VERSION="2.0.1"
 readonly INSTALL_DIR="/opt/netswift"
 readonly BASE_URL="https://raw.githubusercontent.com/melsayeh/netswift2-installer/main"
 readonly LOG_FILE="/var/log/netswift-install.log"
@@ -20,6 +20,7 @@ readonly MIN_DISK_GB=10
 # Docker image details
 readonly DOCKER_IMAGE="melsayeh/netswift-backend"
 readonly DOCKER_TAG="2.0.0"
+readonly APPSMITH_IMAGE="appsmith/appsmith-ce:latest"
 
 #═══════════════════════════════════════════════════════════════════════════
 # COLORS & FORMATTING
@@ -457,26 +458,102 @@ configure_selinux() {
     fi
 }
 
-deploy_containers() {
-    log_info "Pulling Docker images..."
+#═══════════════════════════════════════════════════════════════════════════
+# DOCKER IMAGE MANAGEMENT WITH RETRY LOGIC
+#═══════════════════════════════════════════════════════════════════════════
+
+pull_image_with_retry() {
+    local image="$1"
+    local max_retries=3
+    local retry_delay=10
+    local attempt=1
     
-    if ! docker_compose pull 2>&1 | tee -a "${LOG_FILE}"; then
-        log_error "Failed to pull Docker images"
+    while [[ ${attempt} -le ${max_retries} ]]; do
+        log_info "Pulling ${image} (attempt ${attempt}/${max_retries})..."
+        
+        # Use timeout to prevent indefinite hangs
+        if timeout 600 docker pull "${image}" 2>&1 | tee -a "${LOG_FILE}"; then
+            log_success "Successfully pulled ${image}"
+            return 0
+        else
+            if [[ ${attempt} -lt ${max_retries} ]]; then
+                log_warning "Failed to pull ${image}. Retrying in ${retry_delay} seconds..."
+                sleep ${retry_delay}
+                # Exponential backoff
+                retry_delay=$((retry_delay * 2))
+                ((attempt++))
+            else
+                log_error "Failed to pull ${image} after ${max_retries} attempts"
+                log_info "Common causes:"
+                log_info "  - Network timeout (slow connection)"
+                log_info "  - Docker Hub rate limiting"
+                log_info "  - Firewall blocking Docker registry"
+                log_info "  - TLS handshake timeout"
+                return 1
+            fi
+        fi
+    done
+}
+
+deploy_containers() {
+    log_info "Pulling Docker images (this may take several minutes)..."
+    echo
+    
+    # Pull backend image
+    log_info "Step 1/2: Pulling NetSwift backend image..."
+    if ! pull_image_with_retry "${DOCKER_IMAGE}:${DOCKER_TAG}"; then
+        log_error "Failed to pull backend image"
+        log_info ""
+        log_info "You can try manually later:"
+        log_info "  cd ${INSTALL_DIR}"
+        log_info "  docker pull ${DOCKER_IMAGE}:${DOCKER_TAG}"
+        log_info "  docker compose up -d"
         return 1
     fi
+    
+    echo
+    
+    # Pull Appsmith image (large image, may take time)
+    log_info "Step 2/2: Pulling Appsmith image (large ~500MB, may take time)..."
+    if ! pull_image_with_retry "${APPSMITH_IMAGE}"; then
+        log_error "Failed to pull Appsmith image"
+        log_info ""
+        log_info "You can try manually later:"
+        log_info "  cd ${INSTALL_DIR}"
+        log_info "  docker pull ${APPSMITH_IMAGE}"
+        log_info "  docker compose up -d"
+        return 1
+    fi
+    
+    echo
+    log_success "All images pulled successfully"
     
     log_info "Starting containers..."
     
-    if ! docker_compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
-        log_error "Failed to start containers"
-        return 1
-    fi
+    local max_retries=3
+    local attempt=1
     
-    log_success "Containers started"
+    while [[ ${attempt} -le ${max_retries} ]]; do
+        if docker_compose up -d 2>&1 | tee -a "${LOG_FILE}"; then
+            log_success "Containers started"
+            return 0
+        else
+            if [[ ${attempt} -lt ${max_retries} ]]; then
+                log_warning "Start failed. Retrying in 5 seconds..."
+                sleep 5
+                ((attempt++))
+            else
+                log_error "Failed to start containers after ${max_retries} attempts"
+                log_info "Check logs with: cd ${INSTALL_DIR} && docker compose logs"
+                return 1
+            fi
+        fi
+    done
 }
 
 wait_for_services() {
     log_info "Waiting for services to become healthy..."
+    echo
     
     log_info "Checking backend service..."
     local backend_ready=false
@@ -488,7 +565,7 @@ wait_for_services() {
             break
         fi
         sleep 2
-        echo -n "."
+        [[ $((i % 5)) -eq 0 ]] && echo -n "."
     done
     echo
     
@@ -498,6 +575,7 @@ wait_for_services() {
         docker_compose logs backend | tail -20 | tee -a "${LOG_FILE}"
     fi
     
+    echo
     log_info "Waiting for Appsmith (this may take 1-2 minutes)..."
     local appsmith_ready=false
     
@@ -603,9 +681,11 @@ cd /opt/netswift || exit 1
 echo "Pulling latest images..."
 if docker compose version &>/dev/null; then
     docker compose pull
+    echo "Restarting services..."
     docker compose up -d
 else
     docker-compose pull
+    echo "Restarting services..."
     docker-compose up -d
 fi
 echo "Update complete"
@@ -619,8 +699,9 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 mkdir -p "${BACKUP_DIR}"
 echo "Creating backup..."
 tar -czf "${BACKUP_DIR}/netswift-backup-${TIMESTAMP}.tar.gz" \
-    data/ logs/ docker-compose.yml netswift.json
+    data/ logs/ docker-compose.yml netswift.json 2>/dev/null
 echo "Backup created: ${BACKUP_DIR}/netswift-backup-${TIMESTAMP}.tar.gz"
+ls -lh "${BACKUP_DIR}/netswift-backup-${TIMESTAMP}.tar.gz"
 SCRIPT
     
     cat > "${INSTALL_DIR}/uninstall.sh" << 'SCRIPT'
@@ -681,7 +762,7 @@ print_summary() {
     echo -e "  ${YELLOW}3.${NC} Import application:"
     echo -e "     • Click 'Create New' → 'Import'"
     echo -e "     • Select: ${INSTALL_DIR}/netswift.json"
-    echo -e "  ${YELLOW}4.${NC} Configure backend URL: ${BLUE}http://${server_ip}:8000${NC}"
+    echo -e "  ${YELLOW}4.${NC} Configure backend URL in Appsmith: ${BLUE}http://${server_ip}:8000${NC}"
     echo
     echo -e "${CYAN}${BOLD}Support:${NC}"
     echo -e "  Log file:  ${LOG_FILE}"
