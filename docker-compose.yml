@@ -19,7 +19,7 @@ services:
       start_period: 10s
 
   appsmith:
-    image: appsmith/appsmith-ce:latest
+    image: appsmith/appsmith-ce:v1.88
     container_name: netswift-appsmith
     ports:
       - "80:80"
