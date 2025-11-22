@@ -227,45 +227,62 @@ async function createAdminAccount(page) {
         
         await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 10000 });
         
-        // Fill name fields
-        utils.log(step, 'Filling name fields...');
-        
-        const firstNameSelectors = [
-            'input[name="name"]',
-            'input[placeholder*="First" i]',
-            'input[placeholder*="name" i]'
-        ];
-        
-        for (const selector of firstNameSelectors) {
-            try {
-                const input = page.locator(selector).first();
-                if (await input.isVisible({ timeout: 1000 })) {
-                    await input.fill('NetSwift');
-                    utils.log(step, 'First name entered: NetSwift');
-                    break;
-                }
-            } catch (e) {
-                continue;
-            }
+// Fill name fields - IMPROVED SELECTORS
+utils.log(step, 'Filling name fields...');
+
+// Wait for form to be fully loaded
+await page.waitForSelector('input[type="email"]', { timeout: 10000 });
+await page.waitForTimeout(1000);
+
+// First name - try multiple strategies
+const firstNameSelectors = [
+    'input[name="name"]',
+    'input[placeholder*="name" i]',
+    'input[placeholder*="First" i]',
+    'input[id*="name" i]',
+    'input[id*="first" i]',
+];
+
+let firstNameFilled = false;
+for (const selector of firstNameSelectors) {
+    try {
+        const input = page.locator(selector).first();
+        if (await input.isVisible({ timeout: 2000 })) {
+            await input.click();
+            await input.fill('NetSwift');
+            utils.log(step, `First name entered with selector: ${selector}`);
+            firstNameFilled = true;
+            break;
         }
-        
-        const lastNameSelectors = [
-            'input[placeholder*="Last" i]',
-            'input[name="lastName"]'
-        ];
-        
-        for (const selector of lastNameSelectors) {
-            try {
-                const input = page.locator(selector).first();
-                if (await input.isVisible({ timeout: 1000 })) {
-                    await input.fill('Admin');
-                    utils.log(step, 'Last name entered: Admin');
-                    break;
-                }
-            } catch (e) {
-                continue;
-            }
+    } catch (e) {
+        continue;
+    }
+}
+
+if (!firstNameFilled) {
+    utils.log(step, 'First name field not found - might be combined name field');
+}
+
+// Last name
+const lastNameSelectors = [
+    'input[placeholder*="Last" i]',
+    'input[name="lastName"]',
+    'input[id*="last" i]'
+];
+
+for (const selector of lastNameSelectors) {
+    try {
+        const input = page.locator(selector).first();
+        if (await input.isVisible({ timeout: 2000 })) {
+            await input.click();
+            await input.fill('Admin');
+            utils.log(step, `Last name entered with selector: ${selector}`);
+            break;
         }
+    } catch (e) {
+        continue;
+    }
+}
         
         // Fill email
         utils.log(step, 'Filling email...');
