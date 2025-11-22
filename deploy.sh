@@ -532,12 +532,12 @@ setup_automation() {
     # Create package.json
     cat > "${INSTALL_DIR}/automation/package.json" << 'EOF'
 {
-  "name": "netswift-automation",
-  "version": "1.0.0",
-  "description": "Appsmith JSON import automation",
+  "name": "netswift-automation-playwright",
+  "version": "2.0.0",
+  "description": "Appsmith JSON import automation using Playwright",
   "main": "automate.js",
   "dependencies": {
-    "puppeteer": "^21.6.1"
+    "playwright": "^1.40.1"
   }
 }
 EOF
