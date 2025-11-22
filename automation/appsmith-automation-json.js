@@ -395,6 +395,35 @@ try {
     utils.log(step, 'Onboarding questions not found or already completed');
 }
 
+// Handle onboarding questions
+utils.log(step, 'Handling onboarding questions...');
+
+try {
+    // Wait for onboarding page to appear
+    await page.waitForSelector('text=What is your general development proficiency', { timeout: 5000 });
+    
+    // Question 1: Development proficiency - select "Novice"
+    await page.click('button:has-text("Novice"), div[role="button"]:has-text("Novice")');
+    utils.log(step, 'Selected: Novice');
+    await page.waitForTimeout(1000);
+    
+    // Question 2: Use case - select "Personal Project"
+    await page.click('button:has-text("Personal Project"), div[role="button"]:has-text("Personal Project")');
+    utils.log(step, 'Selected: Personal Project');
+    await page.waitForTimeout(1000);
+    
+    // Leave checkbox as-is (checked by default is fine)
+    utils.log(step, 'Left checkbox as default');
+    await page.waitForTimeout(1000);
+    
+    // Click "Get started" button
+    await page.click('button:has-text("Get started")');
+    utils.log(step, 'Clicked Get started button');
+    
+} catch (e) {
+    utils.log(step, 'Onboarding questions not found or already completed');
+}
+
 // Wait for redirect to applications page OR login page
 utils.log(step, 'Waiting for redirect...');
 
@@ -429,6 +458,39 @@ try {
     if (currentUrl.includes('/setup/welcome') || currentUrl.includes('/user/signup')) {
         throw new Error('Signup FAILED - still on signup page after submission');
     }
+}
+
+const finalUrl = page.url();
+utils.log(step, `Final URL: ${finalUrl}`);
+await utils.takeScreenshot(page, 'signup-final-state');
+
+// Verify we're not still on signup page
+if (finalUrl.includes('/setup/welcome') || finalUrl.includes('/user/signup')) {
+    throw new Error('Signup FAILED - still on signup page! Admin account was not created.');
+}
+
+if (finalUrl.includes('/applications') || 
+    finalUrl.includes('/home') || 
+    finalUrl.includes('/workspace')) {
+    utils.success(step, `Admin account created: ${config.admin.email}`);
+    return true;
+}
+
+try {
+    await page.waitForSelector('.workspace, [class*="workspace"], [class*="home"], [class*="application"]', { 
+        timeout: 10000 
+    });
+    utils.success(step, `Admin account created: ${config.admin.email}`);
+    return true;
+} catch (e) {
+    throw new Error('Could not verify admin account creation - not on expected page');
+}
+
+} catch (error) {
+    utils.error(step, 'Failed to create admin account', error);
+    await utils.takeScreenshot(page, 'signup-error');
+    throw error;
+}
 }
 // Step 3: Import application from JSON file
 async function importFromJson(page) {
