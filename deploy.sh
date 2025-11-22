@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # NetSwift ULTIMATE One-Liner Deployment
-# Version: 6.0.2
+# Version: 6.1.0 - Playwright Edition
 # 
 # Everything is downloaded from GitHub - user just runs ONE command!
 #
@@ -15,8 +15,13 @@
 #   2. Downloads automation script from your GitHub repo
 #   3. Installs all dependencies (Docker, Node.js)
 #   4. Deploys containers (Appsmith + Backend)
-#   5. Runs Puppeteer automation (admin, import, datasource, deploy)
+#   5. Runs Playwright automation (admin, import, datasource, deploy)
 #   6. DONE! Zero manual steps.
+#
+# NEW in 6.1.0:
+#   • Playwright automation for superior reliability
+#   • Auto-waiting eliminates timing issues
+#   • Trace viewer for easy debugging
 #
 
 set -euo pipefail
@@ -25,7 +30,7 @@ set -euo pipefail
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="6.0.2"
+readonly SCRIPT_VERSION="6.1.0"
 readonly INSTALL_DIR="/opt/netswift"
 readonly LOG_FILE="/var/log/netswift-install.log"
 
@@ -527,31 +532,25 @@ wait_for_services() {
 }
 
 setup_automation() {
-    log_info "Setting up Puppeteer automation..."
+    log_info "Setting up Playwright automation..."
     
-    # Create package.json
-    cat > "${INSTALL_DIR}/automation/package.json" << 'EOF'
-{
-  "name": "netswift-automation-playwright",
-  "version": "2.0.0",
-  "description": "Appsmith JSON import automation using Playwright",
-  "main": "automate.js",
-  "dependencies": {
-    "playwright": "^1.40.1"
-  }
-}
-EOF
+    # Package.json is now downloaded from GitHub (includes Playwright dependency)
+    # No need to create it here
     
-    # Install dependencies
-    log_info "Installing npm dependencies (this may take a minute)..."
+    # Install npm dependencies
+    log_info "Installing Playwright npm package (this may take a minute)..."
     cd "${INSTALL_DIR}/automation"
     npm install --silent 2>&1 | tee -a "${LOG_FILE}"
     
-    log_success "Automation setup complete"
+    # Install Chromium browser (required for Playwright)
+    log_info "Installing Chromium browser for Playwright..."
+    npx playwright install --with-deps chromium 2>&1 | tee -a "${LOG_FILE}"
+    
+    log_success "Playwright automation setup complete"
 }
 
 run_automation() {
-    log_info "Running Puppeteer automation..."
+    log_info "Running Playwright automation..."
     log_info "This will take 2-3 minutes..."
     
     local server_ip
@@ -566,6 +565,7 @@ run_automation() {
     export DATASOURCE_URL="${DATASOURCE_URL}"
     export HEADLESS="${HEADLESS_MODE}"
     export TIMEOUT="120000"
+    export RECORD_TRACE="true"  # Enable trace recording for debugging
     
     cd "${INSTALL_DIR}/automation"
     
@@ -574,6 +574,13 @@ run_automation() {
         return 0
     else
         log_error "Automation failed - check logs at ${LOG_FILE}"
+        
+        # Inform user about trace file for debugging
+        if [[ -f "/tmp/appsmith-automation-trace.zip" ]]; then
+            log_info "📊 Trace file available for debugging!"
+            log_info "View with: cd ${INSTALL_DIR}/automation && npx playwright show-trace /tmp/appsmith-automation-trace.zip"
+        fi
+        
         log_warning "You can retry manually: cd ${INSTALL_DIR}/automation && npm start"
         return 1
     fi
@@ -642,6 +649,32 @@ cd /opt/netswift/automation || exit 1
 export APPSMITH_URL="http://localhost"
 export APP_JSON_PATH="/opt/netswift/netswift.json"
 npm start
+SCRIPT
+    
+    cat > "${INSTALL_DIR}/view-trace.sh" << 'SCRIPT'
+#!/bin/bash
+# View Playwright trace for debugging automation issues
+cd /opt/netswift/automation || exit 1
+TRACE_FILE="/tmp/appsmith-automation-trace.zip"
+
+if [[ -f "${TRACE_FILE}" ]]; then
+    echo "╔═══════════════════════════════════════════════════════════════════╗"
+    echo "║                    Opening Playwright Trace Viewer                ║"
+    echo "╚═══════════════════════════════════════════════════════════════════╝"
+    echo
+    echo "This shows a detailed timeline of the automation with:"
+    echo "  • Screenshots at every step"
+    echo "  • DOM snapshots you can inspect"
+    echo "  • Network requests and responses"
+    echo "  • Console logs"
+    echo "  • Timing information"
+    echo
+    npx playwright show-trace "${TRACE_FILE}"
+else
+    echo "No trace file found at ${TRACE_FILE}"
+    echo "Trace files are created when automation fails"
+    echo "or when ALWAYS_SAVE_TRACE=true is set"
+fi
 SCRIPT
     
     chmod +x "${INSTALL_DIR}"/*.sh
@@ -831,7 +864,7 @@ install_netswift() {
     log_step "9/12" "Waiting for services to be healthy"
     wait_for_services
     
-    log_step "10/12" "Setting up Puppeteer automation"
+    log_step "10/12" "Setting up Playwright automation"
     setup_automation
     
     log_step "11/12" "Running automation (2-3 minutes)"
@@ -862,11 +895,12 @@ install_netswift() {
     echo -e "  Restart:      ${INSTALL_DIR}/restart.sh"
     echo -e "  Update:       ${INSTALL_DIR}/update.sh"
     echo -e "  Redeploy App: ${INSTALL_DIR}/redeploy-app.sh"
+    echo -e "  View Trace:   ${INSTALL_DIR}/view-trace.sh  ${GREEN}← Debug automation issues${NC}"
     echo
     echo -e "${CYAN}${BOLD}📝 Deployment Info:${NC}"
     echo -e "  ${INSTALL_DIR}/deployment-info.txt"
     echo
-    echo -e "${GREEN}${BOLD}✅ One Command | Zero Manual Steps | 6-7 Minutes Total${NC}"
+    echo -e "${GREEN}${BOLD}✅ Powered by Playwright - Superior reliability and debugging${NC}"
     echo
 }
 
