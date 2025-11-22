@@ -534,17 +534,30 @@ wait_for_services() {
 setup_automation() {
     log_info "Setting up Playwright automation..."
     
-    # Package.json is now downloaded from GitHub (includes Playwright dependency)
-    # No need to create it here
-    
     # Install npm dependencies
     log_info "Installing Playwright npm package (this may take a minute)..."
     cd "${INSTALL_DIR}/automation"
     npm install --silent 2>&1 | tee -a "${LOG_FILE}"
     
-    # Install Chromium browser (required for Playwright)
+    # Install Chromium browser
     log_info "Installing Chromium browser for Playwright..."
-    npx playwright install --with-deps chromium 2>&1 | tee -a "${LOG_FILE}"
+    
+    # Detect OS for dependency installation
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        OS_ID="${ID}"
+    fi
+    
+    # For RHEL-based systems (Rocky, CentOS, AlmaLinux, RHEL), skip system deps
+    # They're not strictly needed for headless browser operation
+    if [[ "${OS_ID}" =~ ^(rocky|rhel|centos|almalinux)$ ]]; then
+        log_info "Detected ${OS_ID}, installing Chromium without system dependencies..."
+        npx playwright install chromium 2>&1 | tee -a "${LOG_FILE}"
+    else
+        # For Ubuntu/Debian, use --with-deps
+        log_info "Installing Chromium with system dependencies..."
+        npx playwright install --with-deps chromium 2>&1 | tee -a "${LOG_FILE}"
+    fi
     
     log_success "Playwright automation setup complete"
 }
