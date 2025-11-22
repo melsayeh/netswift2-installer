@@ -227,60 +227,55 @@ async function createAdminAccount(page) {
         
         await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 10000 });
         
-// Fill name fields - IMPROVED SELECTORS
+// Fill name fields
 utils.log(step, 'Filling name fields...');
 
-// Wait for form to be fully loaded
+// Wait for form to be ready
 await page.waitForSelector('input[type="email"]', { timeout: 10000 });
 await page.waitForTimeout(1000);
 
-// First name - try multiple strategies
-const firstNameSelectors = [
-    'input[name="name"]',
-    'input[placeholder*="name" i]',
-    'input[placeholder*="First" i]',
-    'input[id*="name" i]',
-    'input[id*="first" i]',
-];
-
-let firstNameFilled = false;
-for (const selector of firstNameSelectors) {
+// First name - use getByLabel (most reliable for Appsmith forms)
+try {
+    // Try by label text first
+    const firstNameInput = page.getByLabel(/first name/i).first();
+    await firstNameInput.click();
+    await firstNameInput.fill('NetSwift');
+    await page.waitForTimeout(500);
+    
+    // Verify it was filled
+    const value = await firstNameInput.inputValue();
+    if (value === 'NetSwift') {
+        utils.log(step, 'First name entered: NetSwift');
+    } else {
+        throw new Error('First name not filled');
+    }
+} catch (e) {
+    // Fallback: try by placeholder
     try {
-        const input = page.locator(selector).first();
-        if (await input.isVisible({ timeout: 2000 })) {
-            await input.click();
-            await input.fill('NetSwift');
-            utils.log(step, `First name entered with selector: ${selector}`);
-            firstNameFilled = true;
-            break;
-        }
-    } catch (e) {
-        continue;
+        const firstNameInput = page.getByPlaceholder(/john/i).first();
+        await firstNameInput.click();
+        await firstNameInput.fill('NetSwift');
+        await page.waitForTimeout(500);
+        utils.log(step, 'First name entered: NetSwift (via placeholder)');
+    } catch (e2) {
+        utils.log(step, `First name field error: ${e2.message}`);
     }
 }
 
-if (!firstNameFilled) {
-    utils.log(step, 'First name field not found - might be combined name field');
-}
-
 // Last name
-const lastNameSelectors = [
-    'input[placeholder*="Last" i]',
-    'input[name="lastName"]',
-    'input[id*="last" i]'
-];
-
-for (const selector of lastNameSelectors) {
+try {
+    const lastNameInput = page.getByLabel(/last name/i).first();
+    await lastNameInput.click();
+    await lastNameInput.fill('Admin');
+    await page.waitForTimeout(500);
+    utils.log(step, 'Last name entered: Admin');
+} catch (e) {
     try {
-        const input = page.locator(selector).first();
-        if (await input.isVisible({ timeout: 2000 })) {
-            await input.click();
-            await input.fill('Admin');
-            utils.log(step, `Last name entered with selector: ${selector}`);
-            break;
-        }
-    } catch (e) {
-        continue;
+        // Fallback to name attribute
+        await page.fill('input[name="lastName"]', 'Admin');
+        utils.log(step, 'Last name entered: Admin (via name attr)');
+    } catch (e2) {
+        utils.log(step, 'Last name might not be required');
     }
 }
         
