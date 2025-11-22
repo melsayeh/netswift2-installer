@@ -1,0 +1,25 @@
+{
+  "name": "netswift-automation-playwright",
+  "version": "2.0.0",
+  "description": "Appsmith JSON import automation using Playwright",
+  "main": "appsmith-automation-json.js",
+  "scripts": {
+    "start": "node appsmith-automation-json.js",
+    "trace": "npx playwright show-trace /tmp/appsmith-automation-trace.zip"
+  },
+  "dependencies": {
+    "playwright": "^1.40.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "appsmith",
+    "automation",
+    "playwright",
+    "deployment",
+    "netswift"
+  ],
+  "author": "NetSwift Team",
+  "license": "MIT"
+}
