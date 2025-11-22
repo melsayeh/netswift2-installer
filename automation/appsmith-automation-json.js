@@ -150,14 +150,100 @@ async function createAdminAccount(page) {
     utils.log(step, 'Creating admin account...');
     
     try {
-        // Navigate to signup page
-        await page.goto(`${config.appsmithUrl}/setup/welcome`, {
+        // First, try to navigate to root and see where it redirects
+        utils.log(step, 'Checking Appsmith initial state...');
+        await page.goto(config.appsmithUrl, {
             waitUntil: 'networkidle2',
             timeout: config.puppeteer.timeout
         });
         
-        await utils.sleep(2000);
-        utils.log(step, 'Signup page loaded');
+        await utils.sleep(3000);
+        
+        const currentUrl = page.url();
+        utils.log(step, `Current URL after root: ${currentUrl}`);
+        
+        // Check if admin already exists (redirects to login or applications)
+        if (currentUrl.includes('/user/login') || 
+            currentUrl.includes('/applications') || 
+            currentUrl.includes('/home')) {
+            
+            utils.log(step, 'Admin account might already exist, attempting login...');
+            
+            // Try to login with provided credentials
+            try {
+                if (currentUrl.includes('/user/login')) {
+                    // Fill login form
+                    await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 5000 });
+                    
+                    const emailInput = await page.$('input[type="email"], input[name="email"]');
+                    if (emailInput) {
+                        await emailInput.type(config.admin.email);
+                        utils.log(step, 'Email entered in login form');
+                    }
+                    
+                    const passwordInput = await page.$('input[type="password"]');
+                    if (passwordInput) {
+                        await passwordInput.type(config.admin.password);
+                        utils.log(step, 'Password entered in login form');
+                    }
+                    
+                    // Click login button
+                    const loginButton = await page.$('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")');
+                    if (loginButton) {
+                        await loginButton.click();
+                        utils.log(step, 'Clicked login button');
+                        await utils.sleep(5000);
+                    }
+                }
+                
+                utils.success(step, 'Logged in with existing admin account');
+                return true;
+                
+            } catch (loginError) {
+                utils.log(step, 'Could not login with provided credentials, admin might not exist');
+                // Continue to signup flow
+            }
+        }
+        
+        // Navigate to signup page
+        utils.log(step, 'Navigating to signup page...');
+        
+        // Try multiple possible signup URLs
+        const signupUrls = [
+            `${config.appsmithUrl}/setup/welcome`,
+            `${config.appsmithUrl}/user/signup`,
+            `${config.appsmithUrl}/signup`
+        ];
+        
+        let signupPageLoaded = false;
+        for (const url of signupUrls) {
+            try {
+                utils.log(step, `Trying URL: ${url}`);
+                await page.goto(url, {
+                    waitUntil: 'networkidle2',
+                    timeout: 30000
+                });
+                
+                await utils.sleep(2000);
+                
+                // Check if we landed on a signup page
+                const hasEmailInput = await page.$('input[type="email"]');
+                if (hasEmailInput) {
+                    signupPageLoaded = true;
+                    utils.log(step, `Signup page loaded: ${url}`);
+                    break;
+                }
+            } catch (e) {
+                utils.log(step, `Failed to load ${url}, trying next...`);
+                continue;
+            }
+        }
+        
+        if (!signupPageLoaded) {
+            throw new Error('Could not find signup page');
+        }
+        
+        utils.log(step, 'Signup page loaded successfully');
         
         // Wait for signup form
         await page.waitForSelector('input[type="email"], input[name="email"]', {
@@ -165,6 +251,51 @@ async function createAdminAccount(page) {
         });
         
         utils.log(step, 'Filling signup form...');
+        
+        // Fill first name
+        const firstNameSelectors = [
+            'input[name="name"]',
+            'input[placeholder*="First" i]',
+            'input[placeholder*="name" i]'
+        ];
+        
+        for (const selector of firstNameSelectors) {
+            try {
+                const elements = await page.$$(selector);
+                if (elements.length > 0) {
+                    await elements[0].click({ clickCount: 3 });
+                    await elements[0].type('NetSwift', { delay: 50 });
+                    utils.log(step, 'First name entered: NetSwift');
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        await utils.sleep(500);
+        
+        // Fill last name (if field exists)
+        const lastNameSelectors = [
+            'input[placeholder*="Last" i]',
+            'input[name="lastName"]'
+        ];
+        
+        for (const selector of lastNameSelectors) {
+            try {
+                const element = await page.$(selector);
+                if (element) {
+                    await element.click({ clickCount: 3 });
+                    await element.type('Admin', { delay: 50 });
+                    utils.log(step, 'Last name entered: Admin');
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        await utils.sleep(500);
         
         // Find and fill email
         const emailSelectors = [
@@ -195,52 +326,42 @@ async function createAdminAccount(page) {
             'input[name="password"]'
         ];
         
+        let passwordFields = [];
         for (const selector of passwordSelectors) {
             try {
-                const element = await page.$(selector);
-                if (element) {
-                    await element.click({ clickCount: 3 });
-                    await element.type(config.admin.password, { delay: 50 });
-                    utils.log(step, 'Password entered');
-                    break;
-                }
+                const elements = await page.$$(selector);
+                passwordFields = passwordFields.concat(elements);
             } catch (e) {
                 continue;
             }
         }
         
+        // Fill first password field
+        if (passwordFields.length > 0) {
+            await passwordFields[0].click({ clickCount: 3 });
+            await passwordFields[0].type(config.admin.password, { delay: 50 });
+            utils.log(step, 'Password entered');
+        }
+        
         await utils.sleep(500);
         
-        // Try to fill name if field exists
-        try {
-            const nameSelectors = [
-                'input[name="name"]',
-                'input[placeholder*="name" i]'
-            ];
-            
-            for (const selector of nameSelectors) {
-                const element = await page.$(selector);
-                if (element) {
-                    await element.click({ clickCount: 3 });
-                    await element.type(config.admin.name, { delay: 50 });
-                    utils.log(step, 'Name entered');
-                    break;
-                }
-            }
-        } catch (e) {
-            utils.log(step, 'Name field not found or not required');
+        // Fill verify password field (if exists)
+        if (passwordFields.length > 1) {
+            await passwordFields[1].click({ clickCount: 3 });
+            await passwordFields[1].type(config.admin.password, { delay: 50 });
+            utils.log(step, 'Verify password entered');
         }
         
         await utils.sleep(1000);
         utils.log(step, 'Form filled, submitting...');
         
-        // Submit the form
+        // Submit the form - look for "Continue" button
         const submitSelectors = [
-            'button[type="submit"]',
+            'button:has-text("Continue")',
             'button:has-text("Sign Up")',
             'button:has-text("Get Started")',
             'button:has-text("Create Account")',
-            'button:has-text("Sign up")',
+            'button[type="submit"]',
             '.signup-submit',
             '.submit-button'
         ];
@@ -261,30 +382,122 @@ async function createAdminAccount(page) {
         }
         
         if (!submitted) {
-            // Try pressing Enter
-            utils.log(step, 'Trying to submit with Enter key...');
-            await page.keyboard.press('Enter');
+            // Try finding by text content
+            await page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const button = buttons.find(b => 
+                    b.textContent.includes('Continue') || 
+                    b.textContent.includes('Sign Up') ||
+                    b.textContent.includes('Get Started')
+                );
+                if (button) button.click();
+            });
         }
         
-        utils.log(step, 'Form submitted, waiting for redirect...');
-        
-        // Wait for redirect to home/workspace
+        utils.log(step, 'Form submitted, waiting for onboarding questions...');
         await utils.sleep(5000);
         
-        const currentUrl = page.url();
-        utils.log(step, `Current URL: ${currentUrl}`);
+        // Handle onboarding questions
+        utils.log(step, 'Handling onboarding questions...');
+        
+        try {
+            // Question 1: Development proficiency - select "Novice"
+            await page.evaluate(() => {
+                const elements = Array.from(document.querySelectorAll('*'));
+                const proficiencyElement = elements.find(el => 
+                    el.textContent.includes('development proficiency') ||
+                    el.textContent.includes('proficiency')
+                );
+                
+                if (proficiencyElement) {
+                    const buttons = Array.from(document.querySelectorAll('button, div[role="button"], label'));
+                    const noviceButton = buttons.find(b => 
+                        b.textContent.trim() === 'Novice' ||
+                        b.textContent.includes('Novice')
+                    );
+                    if (noviceButton) noviceButton.click();
+                }
+            });
+            
+            utils.log(step, 'Selected: Novice');
+            await utils.sleep(1000);
+            
+            // Question 2: Use case - select "Personal Project"
+            await page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('button, div[role="button"], label'));
+                const personalButton = buttons.find(b => 
+                    b.textContent.includes('Personal Project') ||
+                    b.textContent.includes('Personal')
+                );
+                if (personalButton) personalButton.click();
+            });
+            
+            utils.log(step, 'Selected: Personal Project');
+            await utils.sleep(1000);
+            
+            // Untick the updates checkbox
+            await page.evaluate(() => {
+                const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+                const labels = Array.from(document.querySelectorAll('label'));
+                
+                // Find checkbox related to updates
+                for (const label of labels) {
+                    if (label.textContent.includes('security') || 
+                        label.textContent.includes('updates') ||
+                        label.textContent.includes('receiving')) {
+                        const checkbox = label.querySelector('input[type="checkbox"]') || 
+                                       document.getElementById(label.getAttribute('for'));
+                        if (checkbox && checkbox.checked) {
+                            checkbox.click();
+                        }
+                    }
+                }
+                
+                // Fallback: uncheck all checkboxes
+                checkboxes.forEach(cb => {
+                    if (cb.checked) cb.click();
+                });
+            });
+            
+            utils.log(step, 'Unchecked: Security updates checkbox');
+            await utils.sleep(1000);
+            
+            // Click Continue/Next button
+            await page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const continueButton = buttons.find(b => 
+                    b.textContent.includes('Continue') ||
+                    b.textContent.includes('Next') ||
+                    b.textContent.includes('Get Started') ||
+                    b.textContent.includes('Submit')
+                );
+                if (continueButton) continueButton.click();
+            });
+            
+            utils.log(step, 'Clicked Continue button');
+            await utils.sleep(3000);
+            
+        } catch (e) {
+            utils.log(step, 'Onboarding questions might not be present or already handled');
+        }
+        
+        // Wait for redirect to home/workspace
+        await utils.sleep(3000);
+        
+        const finalUrl = page.url();
+        utils.log(step, `Final URL: ${finalUrl}`);
         
         // Check if we're on the home page
-        if (currentUrl.includes('/applications') || 
-            currentUrl.includes('/home') || 
-            currentUrl.includes('/workspace')) {
+        if (finalUrl.includes('/applications') || 
+            finalUrl.includes('/home') || 
+            finalUrl.includes('/workspace')) {
             utils.success(step, `Admin account created: ${config.admin.email}`);
             return true;
         }
         
         // Additional verification
         try {
-            await page.waitForSelector('.workspace, [class*="workspace"], [class*="home"]', { 
+            await page.waitForSelector('.workspace, [class*="workspace"], [class*="home"], [class*="application"]', { 
                 timeout: 10000 
             });
             utils.success(step, `Admin account created: ${config.admin.email}`);
@@ -767,7 +980,7 @@ async function main() {
         // Launch browser
         utils.log('BROWSER', 'Launching browser...');
         browser = await puppeteer.launch({
-            headless: config.puppeteer.headless,
+            headless: config.puppeteer.headless ? 'new' : false,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
