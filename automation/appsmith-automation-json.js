@@ -8,12 +8,6 @@
  * 3. Configure datasource
  * 4. Deploy application
  * 
- * ADVANTAGES over Puppeteer version:
- * - Auto-waiting for elements (no manual sleep() calls needed)
- * - Better error messages with action logs
- * - Built-in trace recording for debugging
- * - More reliable selectors
- * - Better handling of modern SPAs like Appsmith
  * 
  * Usage:
  *   npm install
