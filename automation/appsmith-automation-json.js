@@ -366,86 +366,70 @@ try {
             throw new Error('Email already exists - cannot create admin account');
         }
         
-        // Handle onboarding questions
-        utils.log(step, 'Handling onboarding questions...');
-        
-        try {
-            const noviceButton = page.locator('button:has-text("Novice"), div[role="button"]:has-text("Novice"), label:has-text("Novice")').first();
-            if (await noviceButton.isVisible({ timeout: 5000 })) {
-                await noviceButton.click();
-                utils.log(step, 'Selected: Novice');
-            }
-            
-            await page.waitForTimeout(1000);
-            
-            const personalButton = page.locator('button:has-text("Personal Project"), div[role="button"]:has-text("Personal"), label:has-text("Personal")').first();
-            if (await personalButton.isVisible({ timeout: 5000 })) {
-                await personalButton.click();
-                utils.log(step, 'Selected: Personal Project');
-            }
-            
-            await page.waitForTimeout(1000);
-            
-            const checkboxes = await page.locator('input[type="checkbox"]:checked').all();
-            for (const checkbox of checkboxes) {
-                await checkbox.click();
-            }
-            utils.log(step, 'Unchecked: Security updates checkbox');
-            
-            await page.waitForTimeout(1000);
-            
-            const continueButton = page.locator('button:has-text("Continue"), button:has-text("Next"), button:has-text("Get Started"), button:has-text("Submit")').first();
-            if (await continueButton.isVisible({ timeout: 5000 })) {
-                await continueButton.click();
-                utils.log(step, 'Clicked Continue button');
-            }
-            
-        } catch (e) {
-            utils.log(step, 'Onboarding questions not found or already completed');
-        }
-        
-        // Wait for redirect to home
-        utils.log(step, 'Waiting for redirect to applications page...');
-        
-        try {
-            await page.waitForURL(/\/(applications|home|workspace)/, { timeout: 15000 });
-        } catch (e) {
-            utils.log(step, 'Timeout waiting for home page redirect');
-        }
-        
-        const finalUrl = page.url();
-        utils.log(step, `Final URL: ${finalUrl}`);
-        await utils.takeScreenshot(page, 'signup-final-state');
-        
-        // Verify we're not still on signup page
-        if (finalUrl.includes('/setup/welcome') || finalUrl.includes('/user/signup')) {
-            throw new Error('Signup FAILED - still on signup page! Admin account was not created.');
-        }
-        
-        if (finalUrl.includes('/applications') || 
-            finalUrl.includes('/home') || 
-            finalUrl.includes('/workspace')) {
-            utils.success(step, `Admin account created: ${config.admin.email}`);
-            return true;
-        }
-        
-        try {
-            await page.waitForSelector('.workspace, [class*="workspace"], [class*="home"], [class*="application"]', { 
-                timeout: 10000 
-            });
-            utils.success(step, `Admin account created: ${config.admin.email}`);
-            return true;
-        } catch (e) {
-            throw new Error('Could not verify admin account creation - not on expected page');
-        }
-        
-    } catch (error) {
-        utils.error(step, 'Failed to create admin account', error);
-        await utils.takeScreenshot(page, 'signup-error');
-        throw error;
-    }
+// Handle onboarding questions
+utils.log(step, 'Handling onboarding questions...');
+
+try {
+    // Wait for onboarding page to appear
+    await page.waitForSelector('text=What is your general development proficiency', { timeout: 5000 });
+    
+    // Question 1: Development proficiency - select "Novice"
+    await page.click('button:has-text("Novice"), div[role="button"]:has-text("Novice")');
+    utils.log(step, 'Selected: Novice');
+    await page.waitForTimeout(1000);
+    
+    // Question 2: Use case - select "Personal Project"
+    await page.click('button:has-text("Personal Project"), div[role="button"]:has-text("Personal Project")');
+    utils.log(step, 'Selected: Personal Project');
+    await page.waitForTimeout(1000);
+    
+    // Leave checkbox as-is (checked by default is fine)
+    utils.log(step, 'Left checkbox as default');
+    await page.waitForTimeout(1000);
+    
+    // Click "Get started" button
+    await page.click('button:has-text("Get started")');
+    utils.log(step, 'Clicked Get started button');
+    
+} catch (e) {
+    utils.log(step, 'Onboarding questions not found or already completed');
 }
 
+// Wait for redirect to applications page OR login page
+utils.log(step, 'Waiting for redirect...');
+
+try {
+    await Promise.race([
+        page.waitForURL(/\/(applications|home|workspace)/, { timeout: 20000 }),
+        page.waitForURL(/\/user\/login/, { timeout: 20000 })
+    ]);
+    
+    const currentUrl = page.url();
+    utils.log(step, `Redirected to: ${currentUrl}`);
+    
+    // If on login page, login with the credentials
+    if (currentUrl.includes('/user/login')) {
+        utils.log(step, 'On login page, logging in...');
+        
+        await page.fill('input[type="email"]', config.admin.email);
+        await page.fill('input[type="password"]', config.admin.password);
+        await page.click('button[type="submit"], button:has-text("Login")');
+        
+        await page.waitForURL(/\/(applications|home|workspace)/, { timeout: 15000 });
+        utils.log(step, 'Logged in successfully');
+    }
+    
+} catch (timeoutError) {
+    utils.log(step, 'Timeout waiting for redirect - checking current state...');
+    await utils.takeScreenshot(page, 'signup-timeout');
+    
+    const currentUrl = page.url();
+    utils.log(step, `Current URL after timeout: ${currentUrl}`);
+    
+    if (currentUrl.includes('/setup/welcome') || currentUrl.includes('/user/signup')) {
+        throw new Error('Signup FAILED - still on signup page after submission');
+    }
+}
 // Step 3: Import application from JSON file
 async function importFromJson(page) {
     const step = 'JSON_IMPORT';
