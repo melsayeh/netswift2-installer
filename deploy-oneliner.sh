@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 #
 # NetSwift ULTIMATE One-Liner Deployment
-# Version: 6.0.0
+# Version: 6.0.1
 # 
 # Everything is downloaded from GitHub - user just runs ONE command!
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/netswift/main/deploy.sh | sudo bash -s -- \
-#     --github-repo "YOUR_ORG/netswift" \
-#     --admin-password "SecurePass123!"
+#   curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/netswift/main/deploy.sh | sudo bash 
 #
 # What it does:
 #   1. Downloads netswift.json from your GitHub repo
@@ -432,8 +430,6 @@ create_docker_compose() {
     log_info "Detected host timezone: ${host_timezone}"
     
     cat > "${INSTALL_DIR}/docker-compose.yml" << COMPOSE_EOF
-version: '3.8'
-
 services:
   netswift-backend:
     image: ${DOCKER_IMAGE}:${DOCKER_TAG}
@@ -492,8 +488,16 @@ COMPOSE_EOF
 deploy_containers() {
     log_info "Deploying containers..."
     cd "${INSTALL_DIR}"
-    docker_compose pull 2>&1 | tee -a "${LOG_FILE}"
-    docker_compose up -d 2>&1 | tee -a "${LOG_FILE}"
+    
+    echo ""
+    log_info "Pulling Docker images..."
+    docker_compose pull
+    
+    echo ""
+    log_info "Starting containers..."
+    docker_compose up -d
+    
+    echo ""
     log_success "Containers deployed"
 }
 
@@ -642,6 +646,97 @@ SCRIPT
     log_success "Management scripts created"
 }
 
+#═══════════════════════════════════════════════════════════════════════════
+# UPDATE FUNCTION
+#═══════════════════════════════════════════════════════════════════════════
+
+update_netswift() {
+    log_step "UPDATE" "Updating NetSwift..."
+    
+    if [[ ! -d "${INSTALL_DIR}" ]]; then
+        log_error "NetSwift is not installed. Please install first."
+        exit 1
+    fi
+    
+    cd "${INSTALL_DIR}"
+    
+    log_info "Pulling latest application from GitHub..."
+    download_application_files
+    
+    log_info "Pulling latest Docker images..."
+    echo ""
+    docker_compose pull
+    
+    log_info "Restarting containers..."
+    echo ""
+    docker_compose up -d
+    
+    log_info "Waiting for services..."
+    wait_for_services
+    
+    log_info "Running automation to redeploy application..."
+    run_automation
+    
+    log_success "Update complete!"
+    
+    local server_ip
+    server_ip=$(get_server_ip)
+    
+    echo ""
+    echo -e "${GREEN}${BOLD}✅ NetSwift Updated Successfully!${NC}"
+    echo ""
+    echo -e "Access: ${BLUE}http://${server_ip}${NC}"
+    echo -e "Email:  ${YELLOW}${APPSMITH_ADMIN_EMAIL}${NC}"
+    echo -e "Pass:   ${YELLOW}${APPSMITH_ADMIN_PASSWORD}${NC}"
+    echo ""
+}
+
+#═══════════════════════════════════════════════════════════════════════════
+# UNINSTALL FUNCTION
+#═══════════════════════════════════════════════════════════════════════════
+
+uninstall_netswift() {
+    log_step "UNINSTALL" "Uninstalling NetSwift..."
+    
+    if [[ ! -d "${INSTALL_DIR}" ]]; then
+        log_warning "NetSwift is not installed"
+        return 0
+    fi
+    
+    echo ""
+    echo -e "${RED}${BOLD}⚠️  WARNING ⚠️${NC}"
+    echo -e "${RED}This will completely remove NetSwift including:${NC}"
+    echo -e "  • All Docker containers"
+    echo -e "  • All data and databases"
+    echo -e "  • All configuration files"
+    echo -e "  • Installation directory (${INSTALL_DIR})"
+    echo ""
+    read -p "Are you sure you want to uninstall? (yes/no): " confirm
+    
+    if [[ "${confirm}" != "yes" ]]; then
+        log_info "Uninstall cancelled"
+        return 0
+    fi
+    
+    log_info "Stopping and removing containers..."
+    cd "${INSTALL_DIR}"
+    docker_compose down -v 2>/dev/null || true
+    
+    log_info "Removing Docker images..."
+    docker rmi "${DOCKER_IMAGE}:${DOCKER_TAG}" 2>/dev/null || true
+    docker rmi "${APPSMITH_IMAGE}" 2>/dev/null || true
+    
+    log_info "Removing installation directory..."
+    cd /
+    rm -rf "${INSTALL_DIR}"
+    
+    log_info "Removing log file..."
+    rm -f "${LOG_FILE}"
+    
+    log_success "NetSwift uninstalled successfully!"
+    echo ""
+}
+
 save_deployment_info() {
     log_info "Saving deployment information..."
     
@@ -703,30 +798,10 @@ EOF
 }
 
 #═══════════════════════════════════════════════════════════════════════════
-# MAIN
+# INSTALLATION FUNCTION
 #═══════════════════════════════════════════════════════════════════════════
 
-main() {
-    clear
-    echo -e "${BLUE}${BOLD}"
-    cat << "EOF"
-╔═══════════════════════════════════════════════════════════════════════════╗
-║                                                                           ║
-║            NetSwift 6.0 - Ultimate One-Liner Deployment                   ║
-║          Everything Downloads from GitHub - Zero Manual Steps             ║
-║                                                                           ║
-╚═══════════════════════════════════════════════════════════════════════════╝
-EOF
-    echo -e "${NC}"
-    
-    parse_arguments "$@"
-    validate_config
-    
-    log_info "Starting deployment..."
-    log_info "GitHub Repo: ${GITHUB_REPO}"
-    log_info "Branch: ${GITHUB_BRANCH}"
-    echo
-    
+install_netswift() {
     log_step "1/12" "Checking prerequisites"
     check_root
     
@@ -770,7 +845,7 @@ EOF
     echo
     echo -e "${GREEN}${BOLD}╔═══════════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}${BOLD}║                                                                           ║${NC}"
-    echo -e "${GREEN}${BOLD}║              🎉 DEPLOYMENT COMPLETED SUCCESSFULLY! 🎉                     ║${NC}"
+    echo -e "${GREEN}${BOLD}║              🎉 INSTALLATION COMPLETED SUCCESSFULLY! 🎉                   ║${NC}"
     echo -e "${GREEN}${BOLD}║                                                                           ║${NC}"
     echo -e "${GREEN}${BOLD}╚═══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo
@@ -791,9 +866,170 @@ EOF
     echo
     echo -e "${GREEN}${BOLD}✅ One Command | Zero Manual Steps | 6-7 Minutes Total${NC}"
     echo
-    echo -e "${YELLOW}${BOLD}🔁 To Deploy to Another Server:${NC}"
-    echo -e "  Just run the same curl command - that's it!"
-    echo
+}
+
+#═══════════════════════════════════════════════════════════════════════════
+# INTERACTIVE MENU
+#═══════════════════════════════════════════════════════════════════════════
+
+show_menu() {
+    clear
+    echo -e "${BLUE}${BOLD}"
+    cat << "EOF"
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                NetSwift 2.0 - Installation Manager                        ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+EOF
+    echo -e "${NC}"
+    
+    # Check if NetSwift is already installed
+    if [[ -d "${INSTALL_DIR}" ]] && [[ -f "${INSTALL_DIR}/docker-compose.yml" ]]; then
+        echo -e "${GREEN}Status: NetSwift is installed${NC}"
+    else
+        echo -e "${YELLOW}Status: NetSwift is not installed${NC}"
+    fi
+    
+    echo ""
+    echo "Please select an option:"
+    echo ""
+    echo "  1) Install NetSwift"
+    echo "  2) Update NetSwift (pull latest app and images)"
+    echo "  3) Uninstall NetSwift (complete removal)"
+    echo "  4) Check Status"
+    echo "  5) Exit"
+    echo ""
+    read -p "Enter your choice [1-5]: " choice
+    
+    echo "$choice"
+}
+
+#═══════════════════════════════════════════════════════════════════════════
+# MAIN
+#═══════════════════════════════════════════════════════════════════════════
+
+main() {
+    # If arguments provided, run directly without menu (for curl pipe usage)
+    if [[ $# -gt 0 ]]; then
+        clear
+        echo -e "${BLUE}${BOLD}"
+        cat << "EOF"
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║         NetSwift 2.0 - FULLY AUTOMATED Deployment                         ║
+║              (JSON Import - Zero Touch Deployment)                        ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+EOF
+        echo -e "${NC}"
+        
+        parse_arguments "$@"
+        validate_config
+        
+        log_info "Starting installation..."
+        log_info "GitHub Repo: ${GITHUB_REPO}"
+        log_info "Branch: ${GITHUB_BRANCH}"
+        echo ""
+        
+        install_netswift
+        exit 0
+    fi
+    
+    # Interactive mode
+    while true; do
+        choice=$(show_menu)
+        
+        case $choice in
+            1)
+                clear
+                echo -e "${BLUE}${BOLD}"
+                cat << "EOF"
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                     NetSwift 2.0 Installation                             ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+EOF
+                echo -e "${NC}"
+                
+                if [[ -d "${INSTALL_DIR}" ]]; then
+                    echo ""
+                    echo -e "${YELLOW}⚠️  NetSwift is already installed${NC}"
+                    echo ""
+                    read -p "Reinstall? This will preserve your data. (yes/no): " confirm
+                    if [[ "${confirm}" != "yes" ]]; then
+                        continue
+                    fi
+                fi
+                
+                validate_config
+                install_netswift
+                
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            2)
+                clear
+                echo -e "${BLUE}${BOLD}"
+                cat << "EOF"
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                        NetSwift 2.0 Update                                ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+EOF
+                echo -e "${NC}"
+                
+                update_netswift
+                
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            3)
+                clear
+                echo -e "${BLUE}${BOLD}"
+                cat << "EOF"
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                      NetSwift 2.0 Uninstall                               ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+EOF
+                echo -e "${NC}"
+                
+                uninstall_netswift
+                
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            4)
+                clear
+                if [[ -d "${INSTALL_DIR}" ]]; then
+                    "${INSTALL_DIR}/status.sh"
+                else
+                    echo ""
+                    echo -e "${YELLOW}NetSwift is not installed${NC}"
+                    echo ""
+                fi
+                
+                echo ""
+                read -p "Press Enter to continue..."
+                ;;
+            5)
+                clear
+                echo ""
+                echo -e "${GREEN}Thank you for using NetSwift!${NC}"
+                echo ""
+                exit 0
+                ;;
+            *)
+                echo ""
+                echo -e "${RED}Invalid option. Please try again.${NC}"
+                sleep 2
+                ;;
+        esac
+    done
 }
 
 main "$@"
