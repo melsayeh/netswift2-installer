@@ -105,6 +105,30 @@ get_server_ip() {
     echo "${ip}"
 }
 
+get_host_timezone() {
+    local tz
+    
+    # Try to get timezone from timedatectl (systemd)
+    if command_exists timedatectl; then
+        tz=$(timedatectl | grep "Time zone" | awk '{print $3}')
+    fi
+    
+    # Fallback: check /etc/timezone
+    if [[ -z "${tz}" ]] && [[ -f /etc/timezone ]]; then
+        tz=$(cat /etc/timezone)
+    fi
+    
+    # Fallback: check symlink /etc/localtime
+    if [[ -z "${tz}" ]] && [[ -L /etc/localtime ]]; then
+        tz=$(readlink /etc/localtime | sed 's|/usr/share/zoneinfo/||')
+    fi
+    
+    # Final fallback: UTC
+    [[ -z "${tz}" ]] && tz="UTC"
+    
+    echo "${tz}"
+}
+
 docker_compose() {
     if docker compose version &>/dev/null; then
         docker compose "$@"
@@ -402,6 +426,11 @@ setup_installation_directory() {
 create_docker_compose() {
     log_info "Creating Docker Compose configuration..."
     
+    # Detect host timezone
+    local host_timezone
+    host_timezone=$(get_host_timezone)
+    log_info "Detected host timezone: ${host_timezone}"
+    
     cat > "${INSTALL_DIR}/docker-compose.yml" << COMPOSE_EOF
 version: '3.8'
 
@@ -413,14 +442,15 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - TZ=UTC
+      - PYTHONUNBUFFERED=1
+      - TZ=${host_timezone}
     volumes:
       - ./data/backend:/app/data
       - ./logs/backend:/app/logs
     networks:
       - netswift-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -434,7 +464,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      - TZ=UTC
+      - TZ=${host_timezone}
       - APPSMITH_DISABLE_TELEMETRY=true
       - APPSMITH_SIGNUP_DISABLED=false
     volumes:
@@ -456,7 +486,7 @@ networks:
     driver: bridge
 COMPOSE_EOF
     
-    log_success "Docker Compose configuration created"
+    log_success "Docker Compose configuration created with timezone: ${host_timezone}"
 }
 
 deploy_containers() {
