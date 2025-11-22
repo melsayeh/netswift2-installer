@@ -16,9 +16,9 @@
  * - Better handling of modern SPAs like Appsmith
  * 
  * Usage:
- *   npm install playwright
+ *   npm install
  *   npx playwright install chromium
- *   node appsmith-automation-playwright.js
+ *   node appsmith-automation-json.js
  * 
  * Environment Variables:
  *   APPSMITH_URL          - Appsmith URL (default: http://localhost)
@@ -95,7 +95,6 @@ const utils = {
         console.log(`[${new Date().toISOString()}] [${step}] ✅ ${message}`);
     },
     
-    // Note: Playwright has auto-waiting, so we rarely need manual sleep
     sleep: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
     
     takeScreenshot: async (page, name) => {
@@ -144,13 +143,13 @@ async function waitForAppsmith(page) {
     throw new Error('Appsmith did not become ready within timeout period');
 }
 
-// Step 2: Create admin account (Playwright version with auto-waiting)
+// Step 2: Create admin account
 async function createAdminAccount(page) {
     const step = 'CREATE_ADMIN';
     utils.log(step, 'Creating admin account...');
     
     try {
-        // First, try to navigate to root and see where it redirects
+        // Navigate to root and check initial state
         utils.log(step, 'Checking Appsmith initial state...');
         
         await page.goto(config.appsmithUrl, {
@@ -158,27 +157,22 @@ async function createAdminAccount(page) {
             timeout: 30000
         });
         
-        // Wait a moment for any redirects to complete
         await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
         
         const currentUrl = page.url();
-        utils.log(step, `Current URL after root: ${currentUrl}`);
+        utils.log(step, `Current URL: ${currentUrl}`);
         
-        // Check if admin already exists (redirects to login or applications)
+        // Check if admin already exists
         if (currentUrl.includes('/user/login')) {
             utils.log(step, 'Admin account exists, attempting login...');
             
             try {
-                // Wait for login form to be visible
                 await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 5000 });
-                
-                // Fill login form - Playwright auto-waits for elements to be ready
                 await page.fill('input[type="email"], input[name="email"]', config.admin.email);
                 await page.fill('input[type="password"]', config.admin.password);
                 
                 utils.log(step, 'Login credentials entered');
                 
-                // Click login button and wait for navigation
                 await Promise.all([
                     page.waitForURL(/\/(applications|home|workspace)/, { timeout: 10000 }),
                     page.click('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")')
@@ -198,7 +192,6 @@ async function createAdminAccount(page) {
         // Navigate to signup page
         utils.log(step, 'Navigating to signup page...');
         
-        // Try multiple possible signup URLs
         const signupUrls = [
             `${config.appsmithUrl}/setup/welcome`,
             `${config.appsmithUrl}/user/signup`,
@@ -214,7 +207,6 @@ async function createAdminAccount(page) {
                     timeout: 30000
                 });
                 
-                // Check if we landed on a signup page by looking for email input
                 const emailInput = await page.locator('input[type="email"]').first();
                 if (await emailInput.isVisible({ timeout: 2000 })) {
                     signupPageLoaded = true;
@@ -233,13 +225,11 @@ async function createAdminAccount(page) {
         
         utils.log(step, 'Signup page ready, filling form...');
         
-        // Wait for signup form to be fully loaded
         await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 10000 });
         
-        // Fill name fields - try multiple possible selectors
+        // Fill name fields
         utils.log(step, 'Filling name fields...');
         
-        // Fill first name
         const firstNameSelectors = [
             'input[name="name"]',
             'input[placeholder*="First" i]',
@@ -259,7 +249,6 @@ async function createAdminAccount(page) {
             }
         }
         
-        // Fill last name if field exists
         const lastNameSelectors = [
             'input[placeholder*="Last" i]',
             'input[name="lastName"]'
@@ -278,7 +267,7 @@ async function createAdminAccount(page) {
             }
         }
         
-        // Fill email - Playwright auto-waits for element to be ready
+        // Fill email
         utils.log(step, 'Filling email...');
         await page.fill('input[type="email"]', config.admin.email);
         utils.log(step, 'Email entered');
@@ -292,19 +281,16 @@ async function createAdminAccount(page) {
             utils.log(step, 'Password entered');
         }
         
-        // Fill verify password if it exists
         if (passwordFields.length > 1) {
             await passwordFields[1].fill(config.admin.password);
             utils.log(step, 'Verify password entered');
         }
         
-        // Take screenshot before submission
         await utils.takeScreenshot(page, 'before-signup-submit');
         
         utils.log(step, 'Form filled, submitting...');
         
-        // Find and click the submit button
-        // Playwright will auto-wait for button to be enabled and stable
+        // Submit the form
         const submitSelectors = [
             'button:has-text("Continue")',
             'button:has-text("Sign Up")',
@@ -334,17 +320,13 @@ async function createAdminAccount(page) {
         
         utils.log(step, 'Form submitted, waiting for signup to complete...');
         
-        // PLAYWRIGHT ADVANTAGE: Use waitForURL with pattern matching
-        // This is much more reliable than manual waiting and URL checking
+        // Wait for URL to change or onboarding to appear
         try {
-            // Wait for URL to change away from signup pages OR for onboarding elements to appear
             await Promise.race([
-                // Wait for URL change (timeout 20 seconds)
                 page.waitForURL(url => 
                     !url.includes('/setup/welcome') && !url.includes('/user/signup'),
                     { timeout: 20000 }
                 ),
-                // OR wait for onboarding questions to appear
                 page.waitForSelector('text=Novice, text=Expert, text=Personal Project', { timeout: 20000 })
             ]);
             
@@ -357,7 +339,6 @@ async function createAdminAccount(page) {
             const currentUrl = page.url();
             utils.log(step, `Current URL after timeout: ${currentUrl}`);
             
-            // If still on signup page, signup failed
             if (currentUrl.includes('/setup/welcome') || currentUrl.includes('/user/signup')) {
                 throw new Error('Signup FAILED - still on signup page after submission');
             }
@@ -377,18 +358,14 @@ async function createAdminAccount(page) {
         utils.log(step, 'Handling onboarding questions...');
         
         try {
-            // Question 1: Development proficiency - select "Novice"
-            // Playwright's text selector is much cleaner!
             const noviceButton = page.locator('button:has-text("Novice"), div[role="button"]:has-text("Novice"), label:has-text("Novice")').first();
             if (await noviceButton.isVisible({ timeout: 5000 })) {
                 await noviceButton.click();
                 utils.log(step, 'Selected: Novice');
             }
             
-            // Small wait between selections
             await page.waitForTimeout(1000);
             
-            // Question 2: Use case - select "Personal Project"
             const personalButton = page.locator('button:has-text("Personal Project"), div[role="button"]:has-text("Personal"), label:has-text("Personal")').first();
             if (await personalButton.isVisible({ timeout: 5000 })) {
                 await personalButton.click();
@@ -397,7 +374,6 @@ async function createAdminAccount(page) {
             
             await page.waitForTimeout(1000);
             
-            // Untick the updates checkbox
             const checkboxes = await page.locator('input[type="checkbox"]:checked').all();
             for (const checkbox of checkboxes) {
                 await checkbox.click();
@@ -406,7 +382,6 @@ async function createAdminAccount(page) {
             
             await page.waitForTimeout(1000);
             
-            // Click Continue button
             const continueButton = page.locator('button:has-text("Continue"), button:has-text("Next"), button:has-text("Get Started"), button:has-text("Submit")').first();
             if (await continueButton.isVisible({ timeout: 5000 })) {
                 await continueButton.click();
@@ -417,11 +392,10 @@ async function createAdminAccount(page) {
             utils.log(step, 'Onboarding questions not found or already completed');
         }
         
-        // Wait for redirect to home/workspace
+        // Wait for redirect to home
         utils.log(step, 'Waiting for redirect to applications page...');
         
         try {
-            // PLAYWRIGHT ADVANTAGE: Clean URL pattern matching
             await page.waitForURL(/\/(applications|home|workspace)/, { timeout: 15000 });
         } catch (e) {
             utils.log(step, 'Timeout waiting for home page redirect');
@@ -431,12 +405,11 @@ async function createAdminAccount(page) {
         utils.log(step, `Final URL: ${finalUrl}`);
         await utils.takeScreenshot(page, 'signup-final-state');
         
-        // STRICT VERIFICATION: Ensure we're NOT still on signup page
+        // Verify we're not still on signup page
         if (finalUrl.includes('/setup/welcome') || finalUrl.includes('/user/signup')) {
             throw new Error('Signup FAILED - still on signup page! Admin account was not created.');
         }
         
-        // Verify we're on the expected page
         if (finalUrl.includes('/applications') || 
             finalUrl.includes('/home') || 
             finalUrl.includes('/workspace')) {
@@ -444,7 +417,6 @@ async function createAdminAccount(page) {
             return true;
         }
         
-        // Additional verification - look for workspace elements
         try {
             await page.waitForSelector('.workspace, [class*="workspace"], [class*="home"], [class*="application"]', { 
                 timeout: 10000 
@@ -468,7 +440,6 @@ async function importFromJson(page) {
     utils.log(step, 'Importing application from JSON...');
     
     try {
-        // Navigate to applications page if not already there
         const currentUrl = page.url();
         if (!currentUrl.includes('/applications') && !currentUrl.includes('/home')) {
             utils.log(step, 'Navigating to applications page...');
@@ -480,7 +451,6 @@ async function importFromJson(page) {
         
         utils.log(step, 'Looking for import option...');
         
-        // Look for import button - Playwright text selector is cleaner
         const importSelectors = [
             'button:has-text("Import")',
             'a:has-text("Import")',
@@ -507,15 +477,12 @@ async function importFromJson(page) {
             throw new Error('Could not find import button');
         }
         
-        // Wait for file input to appear
         utils.log(step, `Uploading JSON file: ${config.app.jsonPath}`);
         
-        // PLAYWRIGHT ADVANTAGE: setInputFiles is more reliable than uploadFile
         const fileInput = page.locator('input[type="file"]').first();
         await fileInput.setInputFiles(config.app.jsonPath);
         utils.log(step, 'JSON file uploaded');
         
-        // Look for confirmation/import button
         const confirmSelectors = [
             'button:has-text("Import")',
             'button:has-text("Upload")',
@@ -538,12 +505,10 @@ async function importFromJson(page) {
         
         utils.log(step, 'Waiting for import to complete...');
         
-        // Wait for URL to change to editor or back to applications
         try {
             await page.waitForURL(/\/(edit|editor|applications)/, { timeout: 30000 });
             utils.success(step, 'Application imported successfully');
         } catch (e) {
-            // Check if we can see the imported app
             const hasApp = await page.locator('[class*="application-card"], [class*="app-card"]').first().isVisible({ timeout: 5000 });
             if (hasApp) {
                 utils.success(step, 'Application imported successfully');
@@ -567,28 +532,23 @@ async function configureDatasource(page) {
     utils.log(step, 'Configuring datasource...');
     
     try {
-        // Navigate to editor if not already there
         const url = page.url();
         if (!url.includes('/edit') && !url.includes('/editor')) {
             utils.log(step, 'Opening application in editor...');
             
-            // Go to applications page
             await page.goto(`${config.appsmithUrl}/applications`, {
                 waitUntil: 'domcontentloaded',
                 timeout: config.playwright.timeout
             });
             
-            // Click on the first application
             const firstApp = page.locator('[class*="application-card"], [class*="app-card"]').first();
             await firstApp.click();
             
-            // Wait for editor to load
             await page.waitForURL(/\/(edit|editor)/, { timeout: 10000 });
         }
         
         utils.log(step, 'Opening datasource panel...');
         
-        // Look for datasource tab/button
         const datasourceSelectors = [
             'button:has-text("Datasources")',
             'button:has-text("Data")',
@@ -609,7 +569,6 @@ async function configureDatasource(page) {
             }
         }
         
-        // Find and click on the datasource to configure
         utils.log(step, `Looking for datasource: ${config.datasource.name}`);
         
         const datasource = page.locator(`text=${config.datasource.name}`).first();
@@ -620,7 +579,6 @@ async function configureDatasource(page) {
             throw new Error(`Could not find datasource: ${config.datasource.name}`);
         }
         
-        // Update the URL field
         utils.log(step, 'Updating datasource URL...');
         
         const urlInputSelectors = [
@@ -634,7 +592,6 @@ async function configureDatasource(page) {
             try {
                 const input = page.locator(selector).first();
                 if (await input.isVisible({ timeout: 3000 })) {
-                    // Clear and fill - Playwright handles this cleanly
                     await input.fill(config.datasource.url);
                     utils.log(step, `URL updated to: ${config.datasource.url}`);
                     break;
@@ -644,19 +601,15 @@ async function configureDatasource(page) {
             }
         }
         
-        // Test the connection
         utils.log(step, 'Testing datasource connection...');
         
         const testButton = page.locator('button:has-text("Test"), button:has-text("Test Connection")').first();
         if (await testButton.isVisible({ timeout: 5000 })) {
             await testButton.click();
             utils.log(step, 'Connection test initiated');
-            
-            // Wait for test to complete (look for success/failure message)
             await page.waitForTimeout(3000);
         }
         
-        // Save the datasource
         utils.log(step, 'Saving datasource...');
         
         const saveButton = page.locator('button:has-text("Save"), button:has-text("Save Changes")').first();
@@ -665,7 +618,6 @@ async function configureDatasource(page) {
             utils.log(step, 'Datasource saved');
         }
         
-        // Close modal if present
         const closeButton = page.locator('button:has-text("Done"), button:has-text("Close"), [class*="modal-close"]').first();
         if (await closeButton.isVisible({ timeout: 3000 })) {
             await closeButton.click();
@@ -688,7 +640,6 @@ async function deployApplication(page) {
     utils.log(step, 'Deploying application...');
     
     try {
-        // Make sure we're in the editor
         const url = page.url();
         if (!url.includes('/edit') && !url.includes('/editor')) {
             utils.log(step, 'Navigating to editor...');
@@ -706,7 +657,6 @@ async function deployApplication(page) {
         
         utils.log(step, 'Looking for Deploy button...');
         
-        // Find and click deploy button
         const deploySelectors = [
             'button:has-text("Deploy")',
             'button:has-text("Publish")',
@@ -734,14 +684,12 @@ async function deployApplication(page) {
         
         utils.log(step, 'Waiting for deployment to complete...');
         
-        // Wait for success message
         try {
             await page.waitForSelector('text=deployed successfully, text=published successfully, text=Application is live', { 
                 timeout: 30000 
             });
             utils.success(step, 'Application deployed successfully!');
         } catch (e) {
-            // Check if we can see any error messages
             const hasError = await page.locator('text=error, text=failed').first().isVisible({ timeout: 2000 });
             if (hasError) {
                 throw new Error('Deployment failed - error message detected');
@@ -763,11 +711,9 @@ async function main() {
     console.log('╔═══════════════════════════════════════════════════════════════════╗');
     console.log('║                                                                   ║');
     console.log('║        Appsmith Full Automation - Playwright Version             ║');
-    console.log('║           (Superior reliability and debugging)                   ║');
     console.log('║                                                                   ║');
     console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
     
-    // Validate configuration
     validateConfig();
     
     utils.log('CONFIG', 'Configuration:');
@@ -784,7 +730,6 @@ async function main() {
     const traceFile = '/tmp/appsmith-automation-trace.zip';
     
     try {
-        // Launch browser
         utils.log('BROWSER', 'Launching Chromium...');
         browser = await chromium.launch({
             headless: config.playwright.headless,
@@ -795,16 +740,13 @@ async function main() {
             ]
         });
         
-        // Create context with viewport
         context = await browser.newContext({
             viewport: { width: 1920, height: 1080 },
             userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         });
         
-        // Set default timeout
         context.setDefaultTimeout(config.playwright.timeout);
         
-        // Start tracing for debugging (records screenshots, snapshots, etc.)
         if (config.playwright.recordTrace) {
             await context.tracing.start({ 
                 screenshots: true, 
@@ -818,7 +760,6 @@ async function main() {
         
         utils.success('BROWSER', 'Browser launched');
         
-        // Execute automation steps
         await waitForAppsmith(page);
         await createAdminAccount(page);
         await importFromJson(page);
@@ -845,7 +786,6 @@ async function main() {
         console.log('║                                                                   ║');
         console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
     } finally {
-        // Save trace on failure or if explicitly enabled
         if (context && config.playwright.recordTrace && (!success || process.env.ALWAYS_SAVE_TRACE === 'true')) {
             await context.tracing.stop({ path: traceFile });
             utils.log('TRACE', `Trace saved to ${traceFile}`);
@@ -854,7 +794,7 @@ async function main() {
         
         if (browser) {
             if (config.playwright.headless && !success) {
-                utils.log('BROWSER', 'Automation failed - keeping browser open for 5 minutes for debugging...');
+                utils.log('BROWSER', 'Automation failed - keeping browser open for 5 minutes...');
                 utils.log('BROWSER', 'Press Ctrl+C to close');
                 await utils.sleep(300000);
             }
@@ -866,7 +806,6 @@ async function main() {
     process.exit(success ? 0 : 1);
 }
 
-// Run the automation
 if (require.main === module) {
     main().catch(error => {
         console.error('Fatal error:', error);
