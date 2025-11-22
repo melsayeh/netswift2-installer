@@ -311,50 +311,41 @@ try {
             'button[type="submit"]'
         ];
         
-// Submit the form
-const submitSelectors = [
-    'button:has-text("Continue")',
-    'button:has-text("Sign Up")',
-    'button:has-text("Get Started")',
-    'button:has-text("Create Account")',
-    'button[type="submit"]'
-];
-
-let submitted = false;
-for (const selector of submitSelectors) {
-    try {
-        const button = page.locator(selector).first();
-        if (await button.isVisible({ timeout: 2000 }) && await button.isEnabled()) {
-            await button.click();
-            submitted = true;
-            utils.log(step, `Clicked submit button: ${selector}`);
-            break;
+        let submitted = false;
+        for (const selector of submitSelectors) {
+            try {
+                const button = page.locator(selector).first();
+                if (await button.isVisible({ timeout: 2000 }) && await button.isEnabled()) {
+                    await button.click();
+                    submitted = true;
+                    utils.log(step, `Clicked submit button: ${selector}`);
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
         }
-    } catch (e) {
-        continue;
-    }
-}
-
-if (!submitted) {
-    throw new Error('Could not find enabled submit button');
-}
-
-utils.log(step, 'Form submitted, waiting for signup to complete...');
-
-// CRITICAL: Wait for navigation to actually start
-await page.waitForTimeout(3000);
-
-// Now wait for URL to change or onboarding to appear
-try {
-    await Promise.race([
-        page.waitForURL(url => 
-            !url.includes('/setup/welcome') && !url.includes('/user/signup'),
-            { timeout: 20000 }
-        ),
-        page.waitForSelector('text=What is your general development proficiency', { timeout: 20000 })
-    ]);
-    
-    utils.log(step, 'Signup completed - page transitioned');
+        
+        if (!submitted) {
+            throw new Error('Could not find enabled submit button');
+        }
+        
+        utils.log(step, 'Form submitted, waiting for signup to complete...');
+        
+        // CRITICAL: Wait for navigation to actually start
+        await page.waitForTimeout(3000);
+        
+        // Now wait for URL to change or onboarding to appear
+        try {
+            await Promise.race([
+                page.waitForURL(url => 
+                    !url.includes('/setup/welcome') && !url.includes('/user/signup'),
+                    { timeout: 20000 }
+                ),
+                page.waitForSelector('text=What is your general development proficiency', { timeout: 20000 })
+            ]);
+            
+            utils.log(step, 'Signup completed - page transitioned');
         
         // Wait for URL to change or onboarding to appear
         try {
