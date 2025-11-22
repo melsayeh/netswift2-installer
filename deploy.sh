@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 #
 # NetSwift ULTIMATE One-Liner Deployment
-# Version: 6.0.1
+# Version: 6.0.2
 # 
 # Everything is downloaded from GitHub - user just runs ONE command!
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/netswift/main/deploy.sh | sudo bash 
+#   curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/netswift/main/deploy.sh | sudo bash -s -- \
+#     --github-repo "YOUR_ORG/netswift" \
+#     --admin-password "SecurePass123!"
 #
 # What it does:
 #   1. Downloads netswift.json from your GitHub repo
@@ -23,7 +25,7 @@ set -euo pipefail
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="6.0.0"
+readonly SCRIPT_VERSION="6.0.2"
 readonly INSTALL_DIR="/opt/netswift"
 readonly LOG_FILE="/var/log/netswift-install.log"
 
@@ -910,8 +912,10 @@ EOF
 #═══════════════════════════════════════════════════════════════════════════
 
 main() {
-    # If arguments provided, run directly without menu (for curl pipe usage)
-    if [[ $# -gt 0 ]]; then
+    # Detect if running interactively (has terminal) or via pipe (curl)
+    # If arguments provided OR stdin is not a terminal, run directly without menu
+    if [[ $# -gt 0 ]] || [[ ! -t 0 ]]; then
+        # Non-interactive mode (piped from curl or has arguments)
         clear
         echo -e "${BLUE}${BOLD}"
         cat << "EOF"
@@ -936,7 +940,7 @@ EOF
         exit 0
     fi
     
-    # Interactive mode
+    # Interactive mode - only if running with terminal
     while true; do
         choice=$(show_menu)
         
