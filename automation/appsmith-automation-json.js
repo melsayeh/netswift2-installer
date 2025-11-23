@@ -513,26 +513,23 @@ async function createAdminAccount(page) {
             throw new Error('Signup FAILED - still on signup page! Admin account was not created.');
         }
         
-        // After signup completes, always navigate to login page and login
-        // This matches the successful recording workflow
+        // After signup completes, user is already logged in
+        // Just verify we're on the right page and proceed
         if (finalUrl.includes('/applications') || 
             finalUrl.includes('/home') || 
             finalUrl.includes('/workspace')) {
-            utils.log(step, 'Signup completed, now navigating to login page to establish session...');
+            utils.success(step, `Admin account created and logged in: ${config.admin.email}`);
             
-            // Navigate to login page (from recording)
-            await page.goto(`${config.appsmithUrl}/user/login`, {
+            // Navigate to applications page to ensure we're in the right place for import
+            utils.log(step, 'Navigating to applications page...');
+            await page.goto(`${config.appsmithUrl}/applications`, {
                 waitUntil: 'domcontentloaded',
                 timeout: 30000
             });
             
-            await page.waitForTimeout(2000);
+            // Wait for page to fully load
+            await page.waitForTimeout(3000);
             
-            // Login with the created credentials
-            utils.log(step, 'Logging in with newly created account...');
-            await loginExistingAdmin(page);
-            
-            utils.success(step, `Admin account created and logged in: ${config.admin.email}`);
             return true;
         }
         
@@ -541,16 +538,16 @@ async function createAdminAccount(page) {
                 timeout: 10000 
             });
             
-            // Navigate to login and login
-            utils.log(step, 'Signup completed, now navigating to login page...');
-            await page.goto(`${config.appsmithUrl}/user/login`, {
+            utils.success(step, `Admin account created and logged in: ${config.admin.email}`);
+            
+            // Navigate to applications page
+            utils.log(step, 'Navigating to applications page...');
+            await page.goto(`${config.appsmithUrl}/applications`, {
                 waitUntil: 'domcontentloaded',
                 timeout: 30000
             });
-            await page.waitForTimeout(2000);
-            await loginExistingAdmin(page);
+            await page.waitForTimeout(3000);
             
-            utils.success(step, `Admin account created and logged in: ${config.admin.email}`);
             return true;
         } catch (e) {
             throw new Error('Could not verify admin account creation - not on expected page');
@@ -1110,9 +1107,9 @@ async function main() {
         utils.success('BROWSER', 'Browser launched');
         
         // Execute automation steps
-        // Note: createAdminAccount now handles login after signup automatically
+        // Note: After signup completes, user is already logged in, no separate login needed
         await waitForAppsmith(page);
-        await createAdminAccount(page);  // This now includes login
+        await createAdminAccount(page);  // Creates account and leaves user logged in
         await importFromJson(page);
         await configureDatasource(page);
         await deployApplication(page);
