@@ -1,20 +1,24 @@
 #!/usr/bin/env node
 /**
  * Appsmith Full Automation Script - Consolidated Playwright Version
- * Version: 7.0.0
+ * Version: 7.1.0
  * 
- * This script uses Playwright to automate the Appsmith web UI with improved reliability:
+ * This script uses Playwright to automate the Appsmith web UI:
  * 1. Create admin account with detailed onboarding flow
- * 2. Handle post-signup login if needed
- * 3. Import application from JSON file
- * 4. Configure datasource
- * 5. Deploy application
+ * 2. Import application from JSON file (includes datasource config)
+ * 3. Display access instructions to user
  * 
- * Improvements in v7.0:
+ * Changes in v7.1.0:
+ * - Removed datasource configuration step (included in JSON)
+ * - Removed deployment step (handled by application)
+ * - Added comprehensive user instructions
+ * - Shows NetSwift access URL and credentials
+ * 
+ * Improvements from v7.0:
  * - Integrated precise selectors from successful recording
  * - Enhanced onboarding flow with data-testid selectors
- * - Better login handling after signup
- * - Improved import workflow with workspace context
+ * - Better import workflow with menu navigation
+ * - Proper "Import from file" selection
  */
 
 const { chromium } = require('playwright');
@@ -1113,7 +1117,7 @@ async function deployApplication(page) {
 async function main() {
     console.log('╔═══════════════════════════════════════════════════════════════════╗');
     console.log('║                                                                   ║');
-    console.log('║     Appsmith Full Automation - Consolidated Recording v7.0       ║');
+    console.log('║        Appsmith Automation - NetSwift Installer v7.1.0           ║');
     console.log('║                                                                   ║');
     console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
     
@@ -1167,13 +1171,18 @@ async function main() {
         
         // Execute automation steps
         // Note: After signup completes, user is already logged in, no separate login needed
+        // Note: Datasource configuration is included in the JSON file, no need to configure separately
         await waitForAppsmith(page);
         await createAdminAccount(page);  // Creates account and leaves user logged in
         await importFromJson(page);
-        await configureDatasource(page);
-        await deployApplication(page);
+        
+        // Import is complete - datasource and deployment are already in the JSON
+        utils.success('COMPLETE', 'NetSwift application imported successfully!');
         
         success = true;
+        
+        // Get server IP for instructions
+        const serverIp = config.appsmithUrl.replace('http://', '').replace('https://', '').split(':')[0];
         
         console.log('\n╔═══════════════════════════════════════════════════════════════════╗');
         console.log('║                                                                   ║');
@@ -1181,9 +1190,37 @@ async function main() {
         console.log('║                                                                   ║');
         console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
         
-        utils.log('SUCCESS', `Application URL: ${config.appsmithUrl}`);
-        utils.log('SUCCESS', `Admin Email: ${config.admin.email}`);
-        utils.log('SUCCESS', `Admin Password: ${config.admin.password}`);
+        console.log('╔═══════════════════════════════════════════════════════════════════╗');
+        console.log('║                                                                   ║');
+        console.log('║                    📋 HOW TO ACCESS NETSWIFT                      ║');
+        console.log('║                                                                   ║');
+        console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
+        
+        utils.log('INFO', '🌐 STEP 1: Open NetSwift in your browser');
+        utils.log('INFO', `   URL: http://${serverIp}/app/netswift2-0/loginpage-69231c044fe09d7efe`);
+        utils.log('INFO', '');
+        
+        utils.log('INFO', '🔐 STEP 2: Login to Appsmith (if prompted)');
+        utils.log('INFO', `   Email:    ${config.admin.email}`);
+        utils.log('INFO', `   Password: ${config.admin.password}`);
+        utils.log('INFO', '');
+        
+        utils.log('INFO', '🎯 STEP 3: Login to NetSwift Application');
+        utils.log('INFO', '   Username: admin');
+        utils.log('INFO', '   Password: admin');
+        utils.log('INFO', '');
+        
+        console.log('╔═══════════════════════════════════════════════════════════════════╗');
+        console.log('║                                                                   ║');
+        console.log('║                        🎉 SETUP COMPLETE!                         ║');
+        console.log('║                                                                   ║');
+        console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
+        
+        utils.log('INFO', '📝 Admin Credentials Summary:');
+        utils.log('INFO', `   Appsmith Admin: ${config.admin.email} / ${config.admin.password}`);
+        utils.log('INFO', `   NetSwift App:   admin / admin`);
+        utils.log('INFO', '');
+        utils.log('INFO', `🔗 Direct Link: http://${serverIp}/app/netswift2-0/loginpage-69231c044fe09d7efe`);
         
     } catch (error) {
         utils.error('MAIN', 'Automation failed', error);
