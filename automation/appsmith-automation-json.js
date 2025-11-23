@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
  * Appsmith Full Automation Script - Consolidated Playwright Version
- * Version: 7.1.0
+ * Version: 7.2.0
  * 
  * This script uses Playwright to automate the Appsmith web UI:
  * 1. Create admin account with detailed onboarding flow
  * 2. Import application from JSON file (includes datasource config)
- * 3. Display access instructions to user
+ * 3. Detect actual NetSwift URL (login page ID is dynamic)
+ * 4. Display access instructions with correct URL to user
+ * 
+ * Changes in v7.2.0:
+ * - Added dynamic URL detection for NetSwift login page
+ * - Opens imported app and detects the actual login page URL
+ * - Displays correct URL with dynamic page ID to user
  * 
  * Changes in v7.1.0:
  * - Removed datasource configuration step (included in JSON)
  * - Removed deployment step (handled by application)
  * - Added comprehensive user instructions
  * - Shows NetSwift access URL and credentials
- * 
- * Improvements from v7.0:
- * - Integrated precise selectors from successful recording
- * - Enhanced onboarding flow with data-testid selectors
- * - Better import workflow with menu navigation
- * - Proper "Import from file" selection
  */
 
 const { chromium } = require('playwright');
@@ -893,7 +893,125 @@ async function importFromJson(page) {
     }
 }
 
-// Step 4: Configure datasource
+// Step 4: Get NetSwift application URL (detect dynamic login page ID)
+async function getNetSwiftUrl(page) {
+    const step = 'GET_URL';
+    utils.log(step, 'Detecting NetSwift application URL...');
+    
+    try {
+        // Navigate to applications page if not already there
+        const currentUrl = page.url();
+        if (!currentUrl.includes('/applications')) {
+            utils.log(step, 'Navigating to applications page...');
+            await page.goto(`${config.appsmithUrl}/applications`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+            await page.waitForTimeout(3000);
+        }
+        
+        utils.log(step, 'Looking for NetSwift application...');
+        
+        // Look for the NetSwift app card (should be the most recently imported)
+        const appSelectors = [
+            '[class*="application-card"]:has-text("NetSwift")',
+            '[class*="application-card"]:has-text("netswift")',
+            '[class*="app-card"]:has-text("NetSwift")',
+            '[class*="app-card"]:has-text("netswift")',
+            // Fallback: get first/most recent app
+            '[class*="application-card"]',
+            '[class*="app-card"]'
+        ];
+        
+        let appCard = null;
+        for (const selector of appSelectors) {
+            try {
+                const card = page.locator(selector).first();
+                if (await card.isVisible({ timeout: 5000 })) {
+                    appCard = card;
+                    utils.log(step, `Found app with selector: ${selector}`);
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        if (!appCard) {
+            throw new Error('Could not find NetSwift application card');
+        }
+        
+        await utils.takeScreenshot(page, 'before-opening-app');
+        
+        // Click on the app card to open it
+        utils.log(step, 'Opening NetSwift application...');
+        await appCard.click();
+        
+        // Wait for navigation to app
+        await page.waitForTimeout(5000);
+        await page.waitForURL(/\/app\//, { timeout: 30000 });
+        
+        const appUrl = page.url();
+        utils.log(step, `Current URL: ${appUrl}`);
+        
+        // Extract the page URL (remove /edit or query params)
+        let netswiftUrl = appUrl;
+        
+        // Check if we're already on login page
+        if (appUrl.includes('loginpage-')) {
+            netswiftUrl = appUrl.replace(/\/edit.*$/, '').split('?')[0];
+            utils.log(step, `Already on login page: ${netswiftUrl}`);
+        } else {
+            // Look for login page in pages sidebar
+            utils.log(step, 'Looking for login page in navigation...');
+            await page.waitForTimeout(2000);
+            
+            const loginPageSelectors = [
+                'text=loginpage',
+                'text=LoginPage',
+                'text=Login',
+                '[class*="page"]:has-text("login" i)'
+            ];
+            
+            let loginPageFound = false;
+            for (const selector of loginPageSelectors) {
+                try {
+                    const loginLink = page.locator(selector).first();
+                    if (await loginLink.isVisible({ timeout: 3000 })) {
+                        utils.log(step, `Found login page link: ${selector}`);
+                        await loginLink.click();
+                        await page.waitForTimeout(2000);
+                        await page.waitForURL(/loginpage-/, { timeout: 10000 }).catch(() => {});
+                        netswiftUrl = page.url().replace(/\/edit.*$/, '').split('?')[0];
+                        loginPageFound = true;
+                        utils.log(step, `Navigated to login page: ${netswiftUrl}`);
+                        break;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+            
+            if (!loginPageFound) {
+                // Use current app URL as fallback
+                netswiftUrl = appUrl.replace(/\/edit.*$/, '').split('?')[0];
+                utils.log(step, `Using current page URL: ${netswiftUrl}`);
+            }
+        }
+        
+        await utils.takeScreenshot(page, 'netswift-url-detected');
+        
+        utils.success(step, `NetSwift URL detected: ${netswiftUrl}`);
+        return netswiftUrl;
+        
+    } catch (error) {
+        utils.error(step, 'Failed to detect NetSwift URL', error);
+        await utils.takeScreenshot(page, 'get-url-error');
+        return null;
+    }
+}
+
+// Step 5: Configure datasource (DEPRECATED - kept for reference)
 async function configureDatasource(page) {
     const step = 'DATASOURCE';
     utils.log(step, 'Configuring datasource...');
@@ -1117,7 +1235,7 @@ async function deployApplication(page) {
 async function main() {
     console.log('╔═══════════════════════════════════════════════════════════════════╗');
     console.log('║                                                                   ║');
-    console.log('║        Appsmith Automation - NetSwift Installer v7.1.0           ║');
+    console.log('║        Appsmith Automation - NetSwift Installer v7.2.0           ║');
     console.log('║                                                                   ║');
     console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
     
@@ -1176,6 +1294,9 @@ async function main() {
         await createAdminAccount(page);  // Creates account and leaves user logged in
         await importFromJson(page);
         
+        // Get the actual NetSwift URL (login page ID is dynamic)
+        const netswiftUrl = await getNetSwiftUrl(page);
+        
         // Import is complete - datasource and deployment are already in the JSON
         utils.success('COMPLETE', 'NetSwift application imported successfully!');
         
@@ -1197,7 +1318,12 @@ async function main() {
         console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
         
         utils.log('INFO', '🌐 STEP 1: Open NetSwift in your browser');
-        utils.log('INFO', `   URL: http://${serverIp}/app/netswift2-0/loginpage-69231c044fe09d7efe`);
+        if (netswiftUrl) {
+            utils.log('INFO', `   URL: ${netswiftUrl}`);
+        } else {
+            utils.log('INFO', `   URL: http://${serverIp}/applications`);
+            utils.log('INFO', '   (Then click on the NetSwift application)');
+        }
         utils.log('INFO', '');
         
         utils.log('INFO', '🔐 STEP 2: Login to Appsmith (if prompted)');
@@ -1220,7 +1346,11 @@ async function main() {
         utils.log('INFO', `   Appsmith Admin: ${config.admin.email} / ${config.admin.password}`);
         utils.log('INFO', `   NetSwift App:   admin / admin`);
         utils.log('INFO', '');
-        utils.log('INFO', `🔗 Direct Link: http://${serverIp}/app/netswift2-0/loginpage-69231c044fe09d7efe`);
+        if (netswiftUrl) {
+            utils.log('INFO', `🔗 Direct Link: ${netswiftUrl}`);
+        } else {
+            utils.log('INFO', `🔗 Applications: http://${serverIp}/applications`);
+        }
         
     } catch (error) {
         utils.error('MAIN', 'Automation failed', error);
