@@ -513,10 +513,26 @@ async function createAdminAccount(page) {
             throw new Error('Signup FAILED - still on signup page! Admin account was not created.');
         }
         
+        // After signup completes, always navigate to login page and login
+        // This matches the successful recording workflow
         if (finalUrl.includes('/applications') || 
             finalUrl.includes('/home') || 
             finalUrl.includes('/workspace')) {
-            utils.success(step, `Admin account created: ${config.admin.email}`);
+            utils.log(step, 'Signup completed, now navigating to login page to establish session...');
+            
+            // Navigate to login page (from recording)
+            await page.goto(`${config.appsmithUrl}/user/login`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+            
+            await page.waitForTimeout(2000);
+            
+            // Login with the created credentials
+            utils.log(step, 'Logging in with newly created account...');
+            await loginExistingAdmin(page);
+            
+            utils.success(step, `Admin account created and logged in: ${config.admin.email}`);
             return true;
         }
         
@@ -524,7 +540,17 @@ async function createAdminAccount(page) {
             await page.waitForSelector('.workspace, [class*="workspace"], [class*="home"], [class*="application"]', { 
                 timeout: 10000 
             });
-            utils.success(step, `Admin account created: ${config.admin.email}`);
+            
+            // Navigate to login and login
+            utils.log(step, 'Signup completed, now navigating to login page...');
+            await page.goto(`${config.appsmithUrl}/user/login`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+            await page.waitForTimeout(2000);
+            await loginExistingAdmin(page);
+            
+            utils.success(step, `Admin account created and logged in: ${config.admin.email}`);
             return true;
         } catch (e) {
             throw new Error('Could not verify admin account creation - not on expected page');
@@ -650,9 +676,17 @@ async function importFromJson(page) {
             });
         }
         
-        await page.waitForTimeout(2000);
+        // Wait longer for page to fully load after login
+        utils.log(step, 'Waiting for page to fully load...');
+        await page.waitForTimeout(5000);
+        
+        // Wait for network idle
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+            utils.log(step, 'Network idle timeout, continuing...');
+        });
         
         utils.log(step, 'Looking for import option...');
+        await utils.takeScreenshot(page, 'before-import-search');
         
         // From recording: [data-testid="t--workspace-import-app"]
         const importSelectors = [
@@ -660,25 +694,32 @@ async function importFromJson(page) {
             'div:has-text("Import")',
             'button:has-text("Import")',
             'a:has-text("Import")',
-            'text=Import'
+            'text=Import',
+            '[class*="import"]'
         ];
         
         let importClicked = false;
         for (const selector of importSelectors) {
             try {
+                utils.log(step, `Trying import selector: ${selector}`);
                 const button = page.locator(selector).first();
-                if (await button.isVisible({ timeout: 5000 })) {
+                
+                // Wait longer for element to appear
+                const isVisible = await button.isVisible({ timeout: 10000 });
+                if (isVisible) {
                     await button.click();
                     importClicked = true;
-                    utils.log(step, `Clicked import button: ${selector}`);
+                    utils.log(step, `✓ Clicked import button: ${selector}`);
                     break;
                 }
             } catch (e) {
+                utils.log(step, `Selector ${selector} not found, trying next...`);
                 continue;
             }
         }
         
         if (!importClicked) {
+            await utils.takeScreenshot(page, 'import-button-not-found');
             throw new Error('Could not find import button');
         }
         
@@ -1069,8 +1110,9 @@ async function main() {
         utils.success('BROWSER', 'Browser launched');
         
         // Execute automation steps
+        // Note: createAdminAccount now handles login after signup automatically
         await waitForAppsmith(page);
-        await createAdminAccount(page);
+        await createAdminAccount(page);  // This now includes login
         await importFromJson(page);
         await configureDatasource(page);
         await deployApplication(page);
