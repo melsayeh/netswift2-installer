@@ -7,24 +7,6 @@
  * 2. Import application from JSON file
  * 3. Configure datasource
  * 4. Deploy application
- * 
- * 
- * Usage:
- *   npm install
- *   npx playwright install chromium
- *   node appsmith-automation-json.js
- * 
- * Environment Variables:
- *   APPSMITH_URL          - Appsmith URL (default: http://localhost)
- *   ADMIN_EMAIL           - Admin email (default: admin@netswift.com)
- *   ADMIN_PASSWORD        - Admin password (required)
- *   ADMIN_NAME            - Admin name (default: NetSwift Admin)
- *   APP_JSON_PATH         - Path to application JSON file (required)
- *   DATASOURCE_NAME       - Datasource name (default: NetSwift Backend API)
- *   DATASOURCE_URL        - Datasource URL (default: http://172.17.0.1:8000)
- *   HEADLESS              - Run in headless mode (default: true)
- *   TIMEOUT               - Page timeout in ms (default: 90000)
- *   RECORD_TRACE          - Record trace for debugging (default: true on failure)
  */
 
 const { chromium } = require('playwright');
@@ -219,59 +201,55 @@ async function createAdminAccount(page) {
         
         utils.log(step, 'Signup page ready, filling form...');
         
-        await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 10000 });
+        // Wait for form to be ready
+        await page.waitForSelector('input[type="email"]', { timeout: 10000 });
+        await page.waitForTimeout(1000);
         
-// Fill name fields
-utils.log(step, 'Filling name fields...');
-
-// Wait for form to be ready
-await page.waitForSelector('input[type="email"]', { timeout: 10000 });
-await page.waitForTimeout(1000);
-
-// First name - use getByLabel (most reliable for Appsmith forms)
-try {
-    // Try by label text first
-    const firstNameInput = page.getByLabel(/first name/i).first();
-    await firstNameInput.click();
-    await firstNameInput.fill('NetSwift');
-    await page.waitForTimeout(500);
-    
-    // Verify it was filled
-    const value = await firstNameInput.inputValue();
-    if (value === 'NetSwift') {
-        utils.log(step, 'First name entered: NetSwift');
-    } else {
-        throw new Error('First name not filled');
-    }
-} catch (e) {
-    // Fallback: try by placeholder
-    try {
-        const firstNameInput = page.getByPlaceholder(/john/i).first();
-        await firstNameInput.click();
-        await firstNameInput.fill('NetSwift');
-        await page.waitForTimeout(500);
-        utils.log(step, 'First name entered: NetSwift (via placeholder)');
-    } catch (e2) {
-        utils.log(step, `First name field error: ${e2.message}`);
-    }
-}
-
-// Last name
-try {
-    const lastNameInput = page.getByLabel(/last name/i).first();
-    await lastNameInput.click();
-    await lastNameInput.fill('Admin');
-    await page.waitForTimeout(500);
-    utils.log(step, 'Last name entered: Admin');
-} catch (e) {
-    try {
-        // Fallback to name attribute
-        await page.fill('input[name="lastName"]', 'Admin');
-        utils.log(step, 'Last name entered: Admin (via name attr)');
-    } catch (e2) {
-        utils.log(step, 'Last name might not be required');
-    }
-}
+        // Fill name fields
+        utils.log(step, 'Filling name fields...');
+        
+        // First name - use getByLabel (most reliable)
+        try {
+            const firstNameInput = page.getByLabel(/first name/i).first();
+            await firstNameInput.click();
+            await firstNameInput.fill('NetSwift');
+            await page.waitForTimeout(500);
+            
+            const value = await firstNameInput.inputValue();
+            if (value === 'NetSwift') {
+                utils.log(step, 'First name entered: NetSwift');
+            } else {
+                throw new Error('First name not filled');
+            }
+        } catch (e) {
+            // Fallback: try by placeholder
+            try {
+                const firstNameInput = page.getByPlaceholder(/john/i).first();
+                await firstNameInput.click();
+                await firstNameInput.fill('NetSwift');
+                await page.waitForTimeout(500);
+                utils.log(step, 'First name entered: NetSwift (via placeholder)');
+            } catch (e2) {
+                utils.log(step, `First name field error: ${e2.message}`);
+            }
+        }
+        
+        // Last name
+        try {
+            const lastNameInput = page.getByLabel(/last name/i).first();
+            await lastNameInput.click();
+            await lastNameInput.fill('Admin');
+            await page.waitForTimeout(500);
+            utils.log(step, 'Last name entered: Admin');
+        } catch (e) {
+            try {
+                // Fallback to name attribute
+                await page.fill('input[name="lastName"]', 'Admin');
+                utils.log(step, 'Last name entered: Admin (via name attr)');
+            } catch (e2) {
+                utils.log(step, 'Last name might not be required');
+            }
+        }
         
         // Fill email
         utils.log(step, 'Filling email...');
@@ -340,18 +318,6 @@ try {
             ]);
             
             utils.log(step, 'Signup completed - page transitioned');
-        
-        // Wait for URL to change or onboarding to appear
-        try {
-            await Promise.race([
-                page.waitForURL(url => 
-                    !url.includes('/setup/welcome') && !url.includes('/user/signup'),
-                    { timeout: 20000 }
-                ),
-                page.waitForSelector('text=Novice, text=Expert, text=Personal Project', { timeout: 20000 })
-            ]);
-            
-            utils.log(step, 'Signup completed - page transitioned');
             
         } catch (timeoutError) {
             utils.log(step, 'Timeout waiting for signup - checking current state...');
@@ -375,132 +341,104 @@ try {
             throw new Error('Email already exists - cannot create admin account');
         }
         
-// Handle onboarding questions
-utils.log(step, 'Handling onboarding questions...');
-
-try {
-    // Wait for onboarding page to appear
-    await page.waitForSelector('text=What is your general development proficiency', { timeout: 5000 });
-    
-    // Question 1: Development proficiency - select "Novice"
-    await page.click('button:has-text("Novice"), div[role="button"]:has-text("Novice")');
-    utils.log(step, 'Selected: Novice');
-    await page.waitForTimeout(1000);
-    
-    // Question 2: Use case - select "Personal Project"
-    await page.click('button:has-text("Personal Project"), div[role="button"]:has-text("Personal Project")');
-    utils.log(step, 'Selected: Personal Project');
-    await page.waitForTimeout(1000);
-    
-    // Leave checkbox as-is (checked by default is fine)
-    utils.log(step, 'Left checkbox as default');
-    await page.waitForTimeout(1000);
-    
-    // Click "Get started" button
-    await page.click('button:has-text("Get started")');
-    utils.log(step, 'Clicked Get started button');
-    
-} catch (e) {
-    utils.log(step, 'Onboarding questions not found or already completed');
-}
-
-// Handle onboarding questions
-utils.log(step, 'Handling onboarding questions...');
-
-try {
-    // Wait for onboarding page to appear
-    await page.waitForSelector('text=What is your general development proficiency', { timeout: 5000 });
-    
-    // Question 1: Development proficiency - select "Novice"
-    await page.click('button:has-text("Novice"), div[role="button"]:has-text("Novice")');
-    utils.log(step, 'Selected: Novice');
-    await page.waitForTimeout(1000);
-    
-    // Question 2: Use case - select "Personal Project"
-    await page.click('button:has-text("Personal Project"), div[role="button"]:has-text("Personal Project")');
-    utils.log(step, 'Selected: Personal Project');
-    await page.waitForTimeout(1000);
-    
-    // Leave checkbox as-is (checked by default is fine)
-    utils.log(step, 'Left checkbox as default');
-    await page.waitForTimeout(1000);
-    
-    // Click "Get started" button
-    await page.click('button:has-text("Get started")');
-    utils.log(step, 'Clicked Get started button');
-    
-} catch (e) {
-    utils.log(step, 'Onboarding questions not found or already completed');
-}
-
-// Wait for redirect to applications page OR login page
-utils.log(step, 'Waiting for redirect...');
-
-try {
-    await Promise.race([
-        page.waitForURL(/\/(applications|home|workspace)/, { timeout: 20000 }),
-        page.waitForURL(/\/user\/login/, { timeout: 20000 })
-    ]);
-    
-    const currentUrl = page.url();
-    utils.log(step, `Redirected to: ${currentUrl}`);
-    
-    // If on login page, login with the credentials
-    if (currentUrl.includes('/user/login')) {
-        utils.log(step, 'On login page, logging in...');
+        // Handle onboarding questions
+        utils.log(step, 'Handling onboarding questions...');
         
-        await page.fill('input[type="email"]', config.admin.email);
-        await page.fill('input[type="password"]', config.admin.password);
-        await page.click('button[type="submit"], button:has-text("Login")');
+        try {
+            // Wait for onboarding page to appear
+            await page.waitForSelector('text=What is your general development proficiency', { timeout: 5000 });
+            
+            // Question 1: Development proficiency - select "Novice"
+            await page.click('button:has-text("Novice"), div[role="button"]:has-text("Novice")');
+            utils.log(step, 'Selected: Novice');
+            await page.waitForTimeout(1000);
+            
+            // Question 2: Use case - select "Personal Project"
+            await page.click('button:has-text("Personal Project"), div[role="button"]:has-text("Personal Project")');
+            utils.log(step, 'Selected: Personal Project');
+            await page.waitForTimeout(1000);
+            
+            // Leave checkbox as-is (checked by default is fine)
+            utils.log(step, 'Left checkbox as default');
+            await page.waitForTimeout(1000);
+            
+            // Click "Get started" button
+            await page.click('button:has-text("Get started")');
+            utils.log(step, 'Clicked Get started button');
+            
+        } catch (e) {
+            utils.log(step, 'Onboarding questions not found or already completed');
+        }
         
-        await page.waitForURL(/\/(applications|home|workspace)/, { timeout: 15000 });
-        utils.log(step, 'Logged in successfully');
+        // Wait for redirect to applications page OR login page
+        utils.log(step, 'Waiting for redirect...');
+        
+        try {
+            await Promise.race([
+                page.waitForURL(/\/(applications|home|workspace)/, { timeout: 20000 }),
+                page.waitForURL(/\/user\/login/, { timeout: 20000 })
+            ]);
+            
+            const currentUrl = page.url();
+            utils.log(step, `Redirected to: ${currentUrl}`);
+            
+            // If on login page, login with the credentials
+            if (currentUrl.includes('/user/login')) {
+                utils.log(step, 'On login page, logging in...');
+                
+                await page.fill('input[type="email"]', config.admin.email);
+                await page.fill('input[type="password"]', config.admin.password);
+                await page.click('button[type="submit"], button:has-text("Login")');
+                
+                await page.waitForURL(/\/(applications|home|workspace)/, { timeout: 15000 });
+                utils.log(step, 'Logged in successfully');
+            }
+            
+        } catch (timeoutError) {
+            utils.log(step, 'Timeout waiting for redirect - checking current state...');
+            await utils.takeScreenshot(page, 'signup-timeout');
+            
+            const currentUrl = page.url();
+            utils.log(step, `Current URL after timeout: ${currentUrl}`);
+            
+            if (currentUrl.includes('/setup/welcome') || currentUrl.includes('/user/signup')) {
+                throw new Error('Signup FAILED - still on signup page after submission');
+            }
+        }
+        
+        const finalUrl = page.url();
+        utils.log(step, `Final URL: ${finalUrl}`);
+        await utils.takeScreenshot(page, 'signup-final-state');
+        
+        // Verify we're not still on signup page
+        if (finalUrl.includes('/setup/welcome') || finalUrl.includes('/user/signup')) {
+            throw new Error('Signup FAILED - still on signup page! Admin account was not created.');
+        }
+        
+        if (finalUrl.includes('/applications') || 
+            finalUrl.includes('/home') || 
+            finalUrl.includes('/workspace')) {
+            utils.success(step, `Admin account created: ${config.admin.email}`);
+            return true;
+        }
+        
+        try {
+            await page.waitForSelector('.workspace, [class*="workspace"], [class*="home"], [class*="application"]', { 
+                timeout: 10000 
+            });
+            utils.success(step, `Admin account created: ${config.admin.email}`);
+            return true;
+        } catch (e) {
+            throw new Error('Could not verify admin account creation - not on expected page');
+        }
+        
+    } catch (error) {
+        utils.error(step, 'Failed to create admin account', error);
+        await utils.takeScreenshot(page, 'signup-error');
+        throw error;
     }
-    
-} catch (timeoutError) {
-    utils.log(step, 'Timeout waiting for redirect - checking current state...');
-    await utils.takeScreenshot(page, 'signup-timeout');
-    
-    const currentUrl = page.url();
-    utils.log(step, `Current URL after timeout: ${currentUrl}`);
-    
-    if (currentUrl.includes('/setup/welcome') || currentUrl.includes('/user/signup')) {
-        throw new Error('Signup FAILED - still on signup page after submission');
-    }
 }
 
-const finalUrl = page.url();
-utils.log(step, `Final URL: ${finalUrl}`);
-await utils.takeScreenshot(page, 'signup-final-state');
-
-// Verify we're not still on signup page
-if (finalUrl.includes('/setup/welcome') || finalUrl.includes('/user/signup')) {
-    throw new Error('Signup FAILED - still on signup page! Admin account was not created.');
-}
-
-if (finalUrl.includes('/applications') || 
-    finalUrl.includes('/home') || 
-    finalUrl.includes('/workspace')) {
-    utils.success(step, `Admin account created: ${config.admin.email}`);
-    return true;
-}
-
-try {
-    await page.waitForSelector('.workspace, [class*="workspace"], [class*="home"], [class*="application"]', { 
-        timeout: 10000 
-    });
-    utils.success(step, `Admin account created: ${config.admin.email}`);
-    return true;
-} catch (e) {
-    throw new Error('Could not verify admin account creation - not on expected page');
-}
-
-} catch (error) {
-    utils.error(step, 'Failed to create admin account', error);
-    await utils.takeScreenshot(page, 'signup-error');
-    throw error;
-}
-}
 // Step 3: Import application from JSON file
 async function importFromJson(page) {
     const step = 'JSON_IMPORT';
