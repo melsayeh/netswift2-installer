@@ -682,16 +682,57 @@ async function importFromJson(page) {
             utils.log(step, 'Network idle timeout, continuing...');
         });
         
-        utils.log(step, 'Looking for import option...');
-        await utils.takeScreenshot(page, 'before-import-search');
+        utils.log(step, 'Looking for Create new button or menu...');
+        await utils.takeScreenshot(page, 'before-clicking-menu');
+        
+        // CRITICAL: Import option is inside "Create new" dropdown menu
+        // First, click on "Create new" button to reveal the Import option
+        const menuSelectors = [
+            'button:has-text("Create new")',
+            '[class*="create-new"]',
+            'button:has-text("New")',
+            '[data-testid*="create-new"]',
+            // Three-dot menu as alternative
+            'button[class*="more"]',
+            '[aria-label*="more" i]',
+            'button[aria-haspopup="menu"]'
+        ];
+        
+        let menuOpened = false;
+        for (const selector of menuSelectors) {
+            try {
+                utils.log(step, `Trying menu button: ${selector}`);
+                const button = page.locator(selector).first();
+                
+                if (await button.isVisible({ timeout: 5000 })) {
+                    await button.click();
+                    menuOpened = true;
+                    utils.log(step, `✓ Opened dropdown menu: ${selector}`);
+                    await page.waitForTimeout(1500); // Wait for dropdown animation
+                    break;
+                }
+            } catch (e) {
+                utils.log(step, `Menu button ${selector} not found, trying next...`);
+                continue;
+            }
+        }
+        
+        if (!menuOpened) {
+            utils.log(step, 'Warning: Could not find menu button, trying direct import...');
+        }
+        
+        await utils.takeScreenshot(page, 'after-menu-click');
+        utils.log(step, 'Looking for Import option in menu...');
         
         // From recording: [data-testid="t--workspace-import-app"]
         const importSelectors = [
             '[data-testid="t--workspace-import-app"]',
+            '[role="menuitem"]:has-text("Import")',
             'div:has-text("Import")',
             'button:has-text("Import")',
             'a:has-text("Import")',
             'text=Import',
+            '[data-testid*="import"]',
             '[class*="import"]'
         ];
         
@@ -716,31 +757,49 @@ async function importFromJson(page) {
         }
         
         if (!importClicked) {
-            await utils.takeScreenshot(page, 'import-button-not-found');
-            throw new Error('Could not find import button');
+            await utils.takeScreenshot(page, 'import-option-not-found-in-menu');
+            throw new Error('Could not find Import option in Create new menu');
         }
         
         await page.waitForTimeout(2000);
         
-        // Click on "Import from file" button if present
+        // After clicking Import, a modal appears with 2 options:
+        // 1. "Import from a Git repo"
+        // 2. "Import from file"
+        // We need to click "Import from file"
+        utils.log(step, 'Looking for "Import from file" option...');
+        await utils.takeScreenshot(page, 'import-modal-with-options');
+        
         // From recording: .button-wrapper
-        try {
-            const importFromFileSelectors = [
-                '.button-wrapper',
-                'div:has-text("Import from file")',
-                'button:has-text("Import from file")'
-            ];
-            
-            for (const selector of importFromFileSelectors) {
+        const importFromFileSelectors = [
+            '.button-wrapper',
+            'div:has-text("Import from file")',
+            'button:has-text("Import from file")',
+            'text=Import from file',
+            '[data-testid*="import-from-file"]'
+        ];
+        
+        let importFromFileClicked = false;
+        for (const selector of importFromFileSelectors) {
+            try {
+                utils.log(step, `Trying "Import from file" selector: ${selector}`);
                 const button = page.locator(selector).first();
-                if (await button.isVisible({ timeout: 3000 })) {
+                
+                if (await button.isVisible({ timeout: 5000 })) {
                     await button.click();
-                    utils.log(step, 'Clicked Import from file');
+                    importFromFileClicked = true;
+                    utils.log(step, `✓ Clicked "Import from file": ${selector}`);
                     break;
                 }
+            } catch (e) {
+                utils.log(step, `Selector ${selector} not found, trying next...`);
+                continue;
             }
-        } catch (e) {
-            utils.log(step, 'Import from file button not found, continuing...');
+        }
+        
+        if (!importFromFileClicked) {
+            await utils.takeScreenshot(page, 'import-from-file-not-found');
+            throw new Error('Could not find "Import from file" option in import modal');
         }
         
         await page.waitForTimeout(1000);
