@@ -1,12 +1,20 @@
 #!/usr/bin/env node
 /**
- * Appsmith Full Automation Script - Playwright Version
+ * Appsmith Full Automation Script - Consolidated Playwright Version
+ * Version: 7.0.0
  * 
- * This script uses Playwright to automate the Appsmith web UI:
- * 1. Create admin account
- * 2. Import application from JSON file
- * 3. Configure datasource
- * 4. Deploy application
+ * This script uses Playwright to automate the Appsmith web UI with improved reliability:
+ * 1. Create admin account with detailed onboarding flow
+ * 2. Handle post-signup login if needed
+ * 3. Import application from JSON file
+ * 4. Configure datasource
+ * 5. Deploy application
+ * 
+ * Improvements in v7.0:
+ * - Integrated precise selectors from successful recording
+ * - Enhanced onboarding flow with data-testid selectors
+ * - Better login handling after signup
+ * - Improved import workflow with workspace context
  */
 
 const { chromium } = require('playwright');
@@ -19,6 +27,8 @@ const config = {
     admin: {
         email: process.env.ADMIN_EMAIL || 'admin@netswift.com',
         password: process.env.ADMIN_PASSWORD,
+        firstName: process.env.ADMIN_FIRSTNAME || 'NetSwift',
+        lastName: process.env.ADMIN_LASTNAME || 'Admin',
         name: process.env.ADMIN_NAME || 'NetSwift Admin'
     },
     app: {
@@ -31,7 +41,8 @@ const config = {
     playwright: {
         headless: process.env.HEADLESS !== 'false',
         timeout: parseInt(process.env.TIMEOUT || '90000'),
-        recordTrace: process.env.RECORD_TRACE !== 'false'
+        recordTrace: process.env.RECORD_TRACE !== 'false',
+        slowMo: parseInt(process.env.SLOWMO || '0')
     }
 };
 
@@ -119,7 +130,7 @@ async function waitForAppsmith(page) {
     throw new Error('Appsmith did not become ready within timeout period');
 }
 
-// Step 2: Create admin account
+// Step 2: Create admin account with improved selectors from recording
 async function createAdminAccount(page) {
     const step = 'CREATE_ADMIN';
     utils.log(step, 'Creating admin account...');
@@ -141,25 +152,7 @@ async function createAdminAccount(page) {
         // Check if admin already exists
         if (currentUrl.includes('/user/login')) {
             utils.log(step, 'Admin account exists, attempting login...');
-            
-            try {
-                await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 5000 });
-                await page.fill('input[type="email"], input[name="email"]', config.admin.email);
-                await page.fill('input[type="password"]', config.admin.password);
-                
-                utils.log(step, 'Login credentials entered');
-                
-                await Promise.all([
-                    page.waitForURL(/\/(applications|home|workspace)/, { timeout: 10000 }),
-                    page.click('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")')
-                ]);
-                
-                utils.success(step, 'Logged in with existing admin account');
-                return true;
-                
-            } catch (loginError) {
-                utils.log(step, 'Could not login, proceeding to signup');
-            }
+            return await loginExistingAdmin(page);
         } else if (currentUrl.includes('/applications') || currentUrl.includes('/home')) {
             utils.success(step, 'Already logged in');
             return true;
@@ -183,6 +176,9 @@ async function createAdminAccount(page) {
                     timeout: 30000
                 });
                 
+                // Wait a moment for page to stabilize
+                await page.waitForTimeout(2000);
+                
                 const emailInput = await page.locator('input[type="email"]').first();
                 if (await emailInput.isVisible({ timeout: 2000 })) {
                     signupPageLoaded = true;
@@ -205,81 +201,125 @@ async function createAdminAccount(page) {
         await page.waitForSelector('input[type="email"]', { timeout: 10000 });
         await page.waitForTimeout(1000);
         
-        // Fill name fields
-        utils.log(step, 'Filling name fields...');
+        // Split full name for firstName/lastName fields
+        const nameParts = config.admin.name.split(' ');
+        const firstName = config.admin.firstName || nameParts[0] || 'NetSwift';
+        const lastName = config.admin.lastName || nameParts.slice(1).join(' ') || 'Admin';
         
-        // First name - use getByLabel (most reliable)
+        // Fill form using data-testid attributes (from recording)
+        utils.log(step, 'Filling first name...');
         try {
-            const firstNameInput = page.getByLabel(/first name/i).first();
-            await firstNameInput.click();
-            await firstNameInput.fill('NetSwift');
-            await page.waitForTimeout(500);
-            
-            const value = await firstNameInput.inputValue();
-            if (value === 'NetSwift') {
-                utils.log(step, 'First name entered: NetSwift');
-            } else {
-                throw new Error('First name not filled');
-            }
-        } catch (e) {
-            // Fallback: try by placeholder
-            try {
-                const firstNameInput = page.getByPlaceholder(/john/i).first();
+            const firstNameSelector = '[data-testid="firstName"]';
+            const firstNameInput = page.locator(firstNameSelector).first();
+            if (await firstNameInput.isVisible({ timeout: 3000 })) {
                 await firstNameInput.click();
-                await firstNameInput.fill('NetSwift');
-                await page.waitForTimeout(500);
-                utils.log(step, 'First name entered: NetSwift (via placeholder)');
-            } catch (e2) {
-                utils.log(step, `First name field error: ${e2.message}`);
+                await firstNameInput.fill(firstName);
+                utils.log(step, `First name: ${firstName}`);
+            } else {
+                // Fallback to label-based selection
+                const input = page.getByLabel(/first name/i).first();
+                await input.click();
+                await input.fill(firstName);
+                utils.log(step, `First name (fallback): ${firstName}`);
             }
-        }
-        
-        // Last name
-        try {
-            const lastNameInput = page.getByLabel(/last name/i).first();
-            await lastNameInput.click();
-            await lastNameInput.fill('Admin');
-            await page.waitForTimeout(500);
-            utils.log(step, 'Last name entered: Admin');
         } catch (e) {
-            try {
-                // Fallback to name attribute
-                await page.fill('input[name="lastName"]', 'Admin');
-                utils.log(step, 'Last name entered: Admin (via name attr)');
-            } catch (e2) {
-                utils.log(step, 'Last name might not be required');
+            utils.log(step, 'Using fallback for first name');
+            await page.fill('input[name="firstName"], input[placeholder*="first" i]', firstName);
+        }
+        
+        utils.log(step, 'Filling last name...');
+        try {
+            const lastNameSelector = '[data-testid="lastName"]';
+            const lastNameInput = page.locator(lastNameSelector).first();
+            if (await lastNameInput.isVisible({ timeout: 3000 })) {
+                await lastNameInput.click();
+                await lastNameInput.fill(lastName);
+                utils.log(step, `Last name: ${lastName}`);
+            } else {
+                // Fallback to label-based selection
+                const input = page.getByLabel(/last name/i).first();
+                await input.click();
+                await input.fill(lastName);
+                utils.log(step, `Last name (fallback): ${lastName}`);
+            }
+        } catch (e) {
+            utils.log(step, 'Using fallback for last name');
+            await page.fill('input[name="lastName"], input[placeholder*="last" i]', lastName);
+        }
+        
+        utils.log(step, 'Filling email...');
+        try {
+            const emailSelector = '[data-testid="email"]';
+            const emailInput = page.locator(emailSelector).first();
+            if (await emailInput.isVisible({ timeout: 3000 })) {
+                await emailInput.click();
+                await emailInput.fill(config.admin.email);
+                utils.log(step, `Email: ${config.admin.email}`);
+            } else {
+                await page.fill('input[type="email"]', config.admin.email);
+                utils.log(step, `Email (fallback): ${config.admin.email}`);
+            }
+        } catch (e) {
+            await page.fill('input[type="email"]', config.admin.email);
+        }
+        
+        utils.log(step, 'Filling password...');
+        try {
+            const passwordSelector = '[data-testid="password"]';
+            const passwordInput = page.locator(passwordSelector).first();
+            if (await passwordInput.isVisible({ timeout: 3000 })) {
+                await passwordInput.click();
+                await passwordInput.fill(config.admin.password);
+                utils.log(step, 'Password entered');
+            } else {
+                const inputs = await page.locator('input[type="password"]').all();
+                if (inputs.length > 0) {
+                    await inputs[0].click();
+                    await inputs[0].fill(config.admin.password);
+                    utils.log(step, 'Password entered (fallback)');
+                }
+            }
+        } catch (e) {
+            const inputs = await page.locator('input[type="password"]').all();
+            if (inputs.length > 0) {
+                await inputs[0].fill(config.admin.password);
             }
         }
         
-        // Fill email
-        utils.log(step, 'Filling email...');
-        await page.fill('input[type="email"]', config.admin.email);
-        utils.log(step, 'Email entered');
-        
-        // Fill password fields
-        utils.log(step, 'Filling password...');
-        const passwordFields = await page.locator('input[type="password"]').all();
-        
-        if (passwordFields.length > 0) {
-            await passwordFields[0].fill(config.admin.password);
-            utils.log(step, 'Password entered');
+        utils.log(step, 'Filling password confirmation...');
+        try {
+            const verifyPasswordSelector = '[data-testid="verifyPassword"]';
+            const verifyPasswordInput = page.locator(verifyPasswordSelector).first();
+            if (await verifyPasswordInput.isVisible({ timeout: 3000 })) {
+                await verifyPasswordInput.click();
+                await verifyPasswordInput.fill(config.admin.password);
+                utils.log(step, 'Password confirmation entered');
+            } else {
+                const inputs = await page.locator('input[type="password"]').all();
+                if (inputs.length > 1) {
+                    await inputs[1].click();
+                    await inputs[1].fill(config.admin.password);
+                    utils.log(step, 'Password confirmation entered (fallback)');
+                }
+            }
+        } catch (e) {
+            const inputs = await page.locator('input[type="password"]').all();
+            if (inputs.length > 1) {
+                await inputs[1].fill(config.admin.password);
+            }
         }
         
-        if (passwordFields.length > 1) {
-            await passwordFields[1].fill(config.admin.password);
-            utils.log(step, 'Verify password entered');
-        }
+        await page.waitForTimeout(1000);
+        await utils.takeScreenshot(page, 'signup-form-filled');
         
-        await utils.takeScreenshot(page, 'before-signup-submit');
+        // Submit signup form - try "Continue" button first (from recording)
+        utils.log(step, 'Submitting signup form...');
         
-        utils.log(step, 'Form filled, submitting...');
-        
-        // Submit the form
         const submitSelectors = [
+            'text=Continue',
             'button:has-text("Continue")',
-            'button:has-text("Sign Up")',
-            'button:has-text("Get Started")',
-            'button:has-text("Create Account")',
+            'button:has-text("Sign up")',
+            'button:has-text("Get started")',
             'button[type="submit"]'
         ];
         
@@ -287,7 +327,7 @@ async function createAdminAccount(page) {
         for (const selector of submitSelectors) {
             try {
                 const button = page.locator(selector).first();
-                if (await button.isVisible({ timeout: 2000 }) && await button.isEnabled()) {
+                if (await button.isVisible({ timeout: 3000 })) {
                     await button.click();
                     submitted = true;
                     utils.log(step, `Clicked submit button: ${selector}`);
@@ -299,79 +339,138 @@ async function createAdminAccount(page) {
         }
         
         if (!submitted) {
-            throw new Error('Could not find enabled submit button');
+            throw new Error('Could not find submit button');
         }
         
-        utils.log(step, 'Form submitted, waiting for signup to complete...');
-        
-        // CRITICAL: Wait for navigation to actually start
+        // Wait for onboarding questions page
         await page.waitForTimeout(3000);
         
-        // Now wait for URL to change or onboarding to appear
+        // Handle onboarding questions (from recording)
         try {
-            await Promise.race([
-                page.waitForURL(url => 
-                    !url.includes('/setup/welcome') && !url.includes('/user/signup'),
-                    { timeout: 20000 }
-                ),
-                page.waitForSelector('text=What is your general development proficiency', { timeout: 20000 })
-            ]);
-            
-            utils.log(step, 'Signup completed - page transitioned');
-            
-        } catch (timeoutError) {
-            utils.log(step, 'Timeout waiting for signup - checking current state...');
-            await utils.takeScreenshot(page, 'signup-timeout');
-            
-            const currentUrl = page.url();
-            utils.log(step, `Current URL after timeout: ${currentUrl}`);
-            
-            if (currentUrl.includes('/setup/welcome') || currentUrl.includes('/user/signup')) {
-                throw new Error('Signup FAILED - still on signup page after submission');
-            }
-        }
-        
-        const afterSubmitUrl = page.url();
-        utils.log(step, `URL after signup: ${afterSubmitUrl}`);
-        await utils.takeScreenshot(page, 'after-signup-submit');
-        
-        // Check for error messages
-        const pageText = await page.textContent('body');
-        if (pageText.toLowerCase().includes('already exists')) {
-            throw new Error('Email already exists - cannot create admin account');
-        }
-        
-        // Handle onboarding questions
-        utils.log(step, 'Handling onboarding questions...');
-        
-        try {
-            // Wait for onboarding page to appear
-            await page.waitForSelector('text=What is your general development proficiency', { timeout: 5000 });
+            utils.log(step, 'Handling onboarding questions...');
             
             // Question 1: Development proficiency - select "Novice"
-            await page.click('button:has-text("Novice"), div[role="button"]:has-text("Novice")');
-            utils.log(step, 'Selected: Novice');
+            // Using the selector from recording
+            const noviceSelectors = [
+                '.sc-jPNehe:nth-child(1) .sc-hLBbgP:nth-child(2) > .sc-dkrFOg',
+                'div:has-text("Novice")',
+                'button:has-text("Novice")',
+                '[role="button"]:has-text("Novice")'
+            ];
+            
+            let noviceClicked = false;
+            for (const selector of noviceSelectors) {
+                try {
+                    const button = page.locator(selector).first();
+                    if (await button.isVisible({ timeout: 3000 })) {
+                        await button.click();
+                        noviceClicked = true;
+                        utils.log(step, 'Selected: Novice');
+                        break;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+            
+            if (!noviceClicked) {
+                utils.log(step, 'Could not select Novice option');
+            }
+            
             await page.waitForTimeout(1000);
             
             // Question 2: Use case - select "Personal Project"
-            await page.click('button:has-text("Personal Project"), div[role="button"]:has-text("Personal Project")');
-            utils.log(step, 'Selected: Personal Project');
+            const personalProjectSelectors = [
+                '.sc-jPNehe:nth-child(3) .sc-hLBbgP:nth-child(2) > .sc-dkrFOg',
+                'div:has-text("Personal Project")',
+                'button:has-text("Personal Project")',
+                '[role="button"]:has-text("Personal Project")'
+            ];
+            
+            let projectClicked = false;
+            for (const selector of personalProjectSelectors) {
+                try {
+                    const button = page.locator(selector).first();
+                    if (await button.isVisible({ timeout: 3000 })) {
+                        await button.click();
+                        projectClicked = true;
+                        utils.log(step, 'Selected: Personal Project');
+                        break;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+            
+            if (!projectClicked) {
+                utils.log(step, 'Could not select Personal Project option');
+            }
+            
             await page.waitForTimeout(1000);
             
-            // Leave checkbox as-is (checked by default is fine)
-            utils.log(step, 'Left checkbox as default');
+            // Handle checkbox if needed (from recording: .ads-v2-checkbox__square)
+            try {
+                const checkboxSelectors = [
+                    '.ads-v2-checkbox__square',
+                    'input[type="checkbox"]',
+                    '[role="checkbox"]'
+                ];
+                
+                for (const selector of checkboxSelectors) {
+                    const checkbox = page.locator(selector).first();
+                    if (await checkbox.isVisible({ timeout: 2000 })) {
+                        // Check if already checked
+                        const isChecked = await checkbox.isChecked().catch(() => false);
+                        if (!isChecked) {
+                            await checkbox.click();
+                            utils.log(step, 'Checked terms checkbox');
+                        } else {
+                            utils.log(step, 'Checkbox already checked');
+                        }
+                        break;
+                    }
+                }
+            } catch (e) {
+                utils.log(step, 'Checkbox handling skipped');
+            }
+            
             await page.waitForTimeout(1000);
             
-            // Click "Get started" button
-            await page.click('button:has-text("Get started")');
-            utils.log(step, 'Clicked Get started button');
+            // Click "Get started" button (from recording: .gqvXeY > .sc-dkrFOg)
+            const getStartedSelectors = [
+                '.gqvXeY > .sc-dkrFOg',
+                'div:has-text("Get started")',
+                'button:has-text("Get started")',
+                'text=Get started'
+            ];
+            
+            let getStartedClicked = false;
+            for (const selector of getStartedSelectors) {
+                try {
+                    const button = page.locator(selector).first();
+                    if (await button.isVisible({ timeout: 3000 })) {
+                        await button.click();
+                        getStartedClicked = true;
+                        utils.log(step, 'Clicked Get started button');
+                        break;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+            
+            if (!getStartedClicked) {
+                utils.log(step, 'Could not click Get started button');
+            }
             
         } catch (e) {
             utils.log(step, 'Onboarding questions not found or already completed');
         }
         
-        // Wait for redirect to applications page OR login page
-        utils.log(step, 'Waiting for redirect...');
+        // Wait for redirect (may go to login page or directly to app)
+        utils.log(step, 'Waiting for redirect after onboarding...');
+        
+        await page.waitForTimeout(3000);
         
         try {
             await Promise.race([
@@ -382,16 +481,10 @@ async function createAdminAccount(page) {
             const currentUrl = page.url();
             utils.log(step, `Redirected to: ${currentUrl}`);
             
-            // If on login page, login with the credentials
+            // If redirected to login page, perform login
             if (currentUrl.includes('/user/login')) {
-                utils.log(step, 'On login page, logging in...');
-                
-                await page.fill('input[type="email"]', config.admin.email);
-                await page.fill('input[type="password"]', config.admin.password);
-                await page.click('button[type="submit"], button:has-text("Login")');
-                
-                await page.waitForURL(/\/(applications|home|workspace)/, { timeout: 15000 });
-                utils.log(step, 'Logged in successfully');
+                utils.log(step, 'Redirected to login page, logging in...');
+                return await loginExistingAdmin(page);
             }
             
         } catch (timeoutError) {
@@ -400,6 +493,11 @@ async function createAdminAccount(page) {
             
             const currentUrl = page.url();
             utils.log(step, `Current URL after timeout: ${currentUrl}`);
+            
+            if (currentUrl.includes('/user/login')) {
+                utils.log(step, 'On login page, attempting login...');
+                return await loginExistingAdmin(page);
+            }
             
             if (currentUrl.includes('/setup/welcome') || currentUrl.includes('/user/signup')) {
                 throw new Error('Signup FAILED - still on signup page after submission');
@@ -439,7 +537,105 @@ async function createAdminAccount(page) {
     }
 }
 
-// Step 3: Import application from JSON file
+// Helper: Login with existing admin account (from recording)
+async function loginExistingAdmin(page) {
+    const step = 'LOGIN';
+    utils.log(step, 'Logging in with existing admin account...');
+    
+    try {
+        // Navigate to login page if not already there
+        const currentUrl = page.url();
+        if (!currentUrl.includes('/user/login')) {
+            await page.goto(`${config.appsmithUrl}/user/login`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+        }
+        
+        await page.waitForTimeout(2000);
+        
+        utils.log(step, 'Filling login credentials...');
+        
+        // Fill email - try different selectors
+        try {
+            await page.fill('input[type="email"]', config.admin.email);
+            utils.log(step, `Email filled: ${config.admin.email}`);
+        } catch (e) {
+            const emailInput = page.locator('input[name="email"]').first();
+            await emailInput.fill(config.admin.email);
+        }
+        
+        await page.waitForTimeout(500);
+        
+        // Fill password
+        try {
+            await page.fill('input[type="password"]', config.admin.password);
+            utils.log(step, 'Password filled');
+        } catch (e) {
+            const passwordInput = page.locator('input[name="password"]').first();
+            await passwordInput.fill(config.admin.password);
+        }
+        
+        await page.waitForTimeout(1000);
+        await utils.takeScreenshot(page, 'login-form-filled');
+        
+        // Submit login form - from recording: .sc-dkrFOg or button with "Sign in"
+        utils.log(step, 'Submitting login form...');
+        
+        const loginButtonSelectors = [
+            '.sc-dkrFOg',
+            'div:has-text("Sign in")',
+            'button:has-text("Sign in")',
+            'button:has-text("Login")',
+            'button[type="submit"]'
+        ];
+        
+        let loginClicked = false;
+        for (const selector of loginButtonSelectors) {
+            try {
+                const button = page.locator(selector).first();
+                if (await button.isVisible({ timeout: 3000 })) {
+                    await Promise.all([
+                        button.click(),
+                        page.waitForNavigation({ timeout: 15000 }).catch(() => {})
+                    ]);
+                    loginClicked = true;
+                    utils.log(step, `Clicked login button: ${selector}`);
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        if (!loginClicked) {
+            throw new Error('Could not find login button');
+        }
+        
+        // Wait for redirect to applications page
+        await page.waitForTimeout(3000);
+        
+        try {
+            await page.waitForURL(/\/(applications|home|workspace)/, { timeout: 15000 });
+            utils.success(step, 'Logged in successfully');
+            return true;
+        } catch (e) {
+            const currentUrl = page.url();
+            if (currentUrl.includes('/applications') || currentUrl.includes('/home')) {
+                utils.success(step, 'Logged in successfully');
+                return true;
+            }
+            throw new Error('Login failed - not redirected to applications page');
+        }
+        
+    } catch (error) {
+        utils.error(step, 'Login failed', error);
+        await utils.takeScreenshot(page, 'login-error');
+        throw error;
+    }
+}
+
+// Step 3: Import application from JSON file (from recording)
 async function importFromJson(page) {
     const step = 'JSON_IMPORT';
     utils.log(step, 'Importing application from JSON...');
@@ -454,13 +650,17 @@ async function importFromJson(page) {
             });
         }
         
+        await page.waitForTimeout(2000);
+        
         utils.log(step, 'Looking for import option...');
         
+        // From recording: [data-testid="t--workspace-import-app"]
         const importSelectors = [
+            '[data-testid="t--workspace-import-app"]',
+            'div:has-text("Import")',
             'button:has-text("Import")',
             'a:has-text("Import")',
-            'text=Import',
-            '[data-testid="t--import-application"]'
+            'text=Import'
         ];
         
         let importClicked = false;
@@ -482,46 +682,107 @@ async function importFromJson(page) {
             throw new Error('Could not find import button');
         }
         
-        utils.log(step, `Uploading JSON file: ${config.app.jsonPath}`);
+        await page.waitForTimeout(2000);
         
-        const fileInput = page.locator('input[type="file"]').first();
-        await fileInput.setInputFiles(config.app.jsonPath);
-        utils.log(step, 'JSON file uploaded');
-        
-        const confirmSelectors = [
-            'button:has-text("Import")',
-            'button:has-text("Upload")',
-            'button:has-text("Continue")',
-            'button[type="submit"]'
-        ];
-        
-        for (const selector of confirmSelectors) {
-            try {
+        // Click on "Import from file" button if present
+        // From recording: .button-wrapper
+        try {
+            const importFromFileSelectors = [
+                '.button-wrapper',
+                'div:has-text("Import from file")',
+                'button:has-text("Import from file")'
+            ];
+            
+            for (const selector of importFromFileSelectors) {
                 const button = page.locator(selector).first();
-                if (await button.isVisible({ timeout: 5000 })) {
+                if (await button.isVisible({ timeout: 3000 })) {
                     await button.click();
-                    utils.log(step, `Clicked confirm button: ${selector}`);
+                    utils.log(step, 'Clicked Import from file');
                     break;
                 }
+            }
+        } catch (e) {
+            utils.log(step, 'Import from file button not found, continuing...');
+        }
+        
+        await page.waitForTimeout(1000);
+        
+        utils.log(step, `Uploading JSON file: ${config.app.jsonPath}`);
+        
+        // From recording: #fileInput
+        const fileInputSelectors = [
+            '#fileInput',
+            'input[type="file"]'
+        ];
+        
+        let fileUploaded = false;
+        for (const selector of fileInputSelectors) {
+            try {
+                const fileInput = page.locator(selector).first();
+                await fileInput.setInputFiles(config.app.jsonPath);
+                fileUploaded = true;
+                utils.log(step, 'JSON file uploaded');
+                break;
             } catch (e) {
                 continue;
             }
         }
         
-        utils.log(step, 'Waiting for import to complete...');
+        if (!fileUploaded) {
+            throw new Error('Could not upload JSON file');
+        }
+        
+        await page.waitForTimeout(2000);
+        
+        // Wait for upload to complete and modal to appear
+        utils.log(step, 'Waiting for import to process...');
+        
+        // Click close/dismiss button if modal appears
+        // From recording: .sc-eJKXev .remixicon-icon (close icon)
+        try {
+            const closeSelectors = [
+                '.sc-eJKXev .remixicon-icon',
+                'button:has-text("Close")',
+                'button:has-text("Done")',
+                '[aria-label="Close"]',
+                '.modal-close'
+            ];
+            
+            await page.waitForTimeout(3000);
+            
+            for (const selector of closeSelectors) {
+                const closeButton = page.locator(selector).first();
+                if (await closeButton.isVisible({ timeout: 5000 })) {
+                    await closeButton.click();
+                    utils.log(step, 'Closed import modal');
+                    break;
+                }
+            }
+        } catch (e) {
+            utils.log(step, 'No modal to close or already closed');
+        }
+        
+        await page.waitForTimeout(2000);
+        
+        utils.log(step, 'Verifying import...');
         
         try {
-            await page.waitForURL(/\/(edit|editor|applications)/, { timeout: 30000 });
+            // Check if we're on editor page or if app card is visible
+            await Promise.race([
+                page.waitForURL(/\/(edit|editor)/, { timeout: 15000 }),
+                page.locator('[class*="application-card"], [class*="app-card"]').first().waitFor({ timeout: 15000 })
+            ]);
             utils.success(step, 'Application imported successfully');
         } catch (e) {
             const hasApp = await page.locator('[class*="application-card"], [class*="app-card"]').first().isVisible({ timeout: 5000 });
             if (hasApp) {
                 utils.success(step, 'Application imported successfully');
             } else {
-                utils.log(step, 'Could not verify import, but continuing...');
+                utils.log(step, 'Could not verify import completely, but continuing...');
             }
         }
         
+        await utils.takeScreenshot(page, 'import-complete');
         return true;
         
     } catch (error) {
@@ -546,19 +807,23 @@ async function configureDatasource(page) {
                 timeout: config.playwright.timeout
             });
             
+            await page.waitForTimeout(2000);
+            
             const firstApp = page.locator('[class*="application-card"], [class*="app-card"]').first();
             await firstApp.click();
             
             await page.waitForURL(/\/(edit|editor)/, { timeout: 10000 });
         }
         
-        utils.log(step, 'Opening datasource panel...');
+        await page.waitForTimeout(2000);
+        
+        utils.log(step, 'Looking for datasource panel...');
         
         const datasourceSelectors = [
-            'button:has-text("Datasources")',
-            'button:has-text("Data")',
             'text=Datasources',
-            '[data-testid="t--datasource-tab"]'
+            '[data-testid="t--datasource"]',
+            'button:has-text("Datasources")',
+            'a:has-text("Datasources")'
         ];
         
         for (const selector of datasourceSelectors) {
@@ -566,7 +831,7 @@ async function configureDatasource(page) {
                 const button = page.locator(selector).first();
                 if (await button.isVisible({ timeout: 5000 })) {
                     await button.click();
-                    utils.log(step, `Clicked datasource tab: ${selector}`);
+                    utils.log(step, `Clicked datasource panel: ${selector}`);
                     break;
                 }
             } catch (e) {
@@ -574,37 +839,63 @@ async function configureDatasource(page) {
             }
         }
         
-        utils.log(step, `Looking for datasource: ${config.datasource.name}`);
+        await page.waitForTimeout(2000);
         
-        const datasource = page.locator(`text=${config.datasource.name}`).first();
-        if (await datasource.isVisible({ timeout: 5000 })) {
-            await datasource.click();
-            utils.log(step, 'Opened datasource configuration');
-        } else {
-            throw new Error(`Could not find datasource: ${config.datasource.name}`);
+        utils.log(step, 'Looking for datasource to configure...');
+        
+        const datasourceNameSelectors = [
+            `text=${config.datasource.name}`,
+            'text=NetSwift',
+            'text=Backend',
+            '[class*="datasource-card"]',
+            '[class*="datasource-item"]'
+        ];
+        
+        let datasourceFound = false;
+        for (const selector of datasourceNameSelectors) {
+            try {
+                const datasource = page.locator(selector).first();
+                if (await datasource.isVisible({ timeout: 5000 })) {
+                    await datasource.click();
+                    datasourceFound = true;
+                    utils.log(step, `Found and opened datasource: ${selector}`);
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
         }
         
-        utils.log(step, 'Updating datasource URL...');
+        if (!datasourceFound) {
+            utils.log(step, 'Datasource not found, may already be configured');
+            return true;
+        }
+        
+        await page.waitForTimeout(2000);
+        
+        utils.log(step, `Configuring datasource URL: ${config.datasource.url}`);
         
         const urlInputSelectors = [
             'input[placeholder*="URL" i]',
             'input[name*="url" i]',
-            'input[type="url"]',
-            'input[placeholder*="host" i]'
+            'input[label*="URL" i]'
         ];
         
         for (const selector of urlInputSelectors) {
             try {
                 const input = page.locator(selector).first();
-                if (await input.isVisible({ timeout: 3000 })) {
+                if (await input.isVisible({ timeout: 5000 })) {
+                    await input.clear();
                     await input.fill(config.datasource.url);
-                    utils.log(step, `URL updated to: ${config.datasource.url}`);
+                    utils.log(step, 'URL configured');
                     break;
                 }
             } catch (e) {
                 continue;
             }
         }
+        
+        await page.waitForTimeout(1000);
         
         utils.log(step, 'Testing datasource connection...');
         
@@ -623,6 +914,8 @@ async function configureDatasource(page) {
             utils.log(step, 'Datasource saved');
         }
         
+        await page.waitForTimeout(2000);
+        
         const closeButton = page.locator('button:has-text("Done"), button:has-text("Close"), [class*="modal-close"]').first();
         if (await closeButton.isVisible({ timeout: 3000 })) {
             await closeButton.click();
@@ -630,6 +923,7 @@ async function configureDatasource(page) {
         }
         
         utils.success(step, 'Datasource configured');
+        await utils.takeScreenshot(page, 'datasource-configured');
         return true;
         
     } catch (error) {
@@ -654,11 +948,15 @@ async function deployApplication(page) {
                 timeout: config.playwright.timeout
             });
             
+            await page.waitForTimeout(2000);
+            
             const firstApp = page.locator('[class*="application-card"], [class*="app-card"]').first();
             await firstApp.click();
             
             await page.waitForURL(/\/(edit|editor)/, { timeout: 10000 });
         }
+        
+        await page.waitForTimeout(2000);
         
         utils.log(step, 'Looking for Deploy button...');
         
@@ -702,6 +1000,9 @@ async function deployApplication(page) {
             utils.log(step, 'Could not verify deployment message, but no errors detected');
         }
         
+        await page.waitForTimeout(2000);
+        await utils.takeScreenshot(page, 'deployment-complete');
+        
         return true;
         
     } catch (error) {
@@ -715,7 +1016,7 @@ async function deployApplication(page) {
 async function main() {
     console.log('╔═══════════════════════════════════════════════════════════════════╗');
     console.log('║                                                                   ║');
-    console.log('║        Appsmith Full Automation - Playwright Version             ║');
+    console.log('║     Appsmith Full Automation - Consolidated Recording v7.0       ║');
     console.log('║                                                                   ║');
     console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
     
@@ -724,6 +1025,7 @@ async function main() {
     utils.log('CONFIG', 'Configuration:');
     utils.log('CONFIG', `  Appsmith URL:  ${config.appsmithUrl}`);
     utils.log('CONFIG', `  Admin Email:   ${config.admin.email}`);
+    utils.log('CONFIG', `  Admin Name:    ${config.admin.firstName} ${config.admin.lastName}`);
     utils.log('CONFIG', `  JSON File:     ${config.app.jsonPath}`);
     utils.log('CONFIG', `  Datasource:    ${config.datasource.url}`);
     utils.log('CONFIG', `  Headless:      ${config.playwright.headless}`);
@@ -738,6 +1040,7 @@ async function main() {
         utils.log('BROWSER', 'Launching Chromium...');
         browser = await chromium.launch({
             headless: config.playwright.headless,
+            slowMo: config.playwright.slowMo,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -746,7 +1049,7 @@ async function main() {
         });
         
         context = await browser.newContext({
-            viewport: { width: 1920, height: 1080 },
+            viewport: { width: 1920, height: 947 }, // From recording
             userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         });
         
@@ -765,6 +1068,7 @@ async function main() {
         
         utils.success('BROWSER', 'Browser launched');
         
+        // Execute automation steps
         await waitForAppsmith(page);
         await createAdminAccount(page);
         await importFromJson(page);
@@ -798,8 +1102,8 @@ async function main() {
         }
         
         if (browser) {
-            if (config.playwright.headless && !success) {
-                utils.log('BROWSER', 'Automation failed - keeping browser open for 5 minutes...');
+            if (!config.playwright.headless && !success) {
+                utils.log('BROWSER', 'Automation failed - keeping browser open for inspection...');
                 utils.log('BROWSER', 'Press Ctrl+C to close');
                 await utils.sleep(300000);
             }
