@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Appsmith Full Automation Script - Consolidated Playwright Version
- * Version: 7.2.0
+ * Version: 7.2.1
  * 
  * This script uses Playwright to automate the Appsmith web UI:
  * 1. Create admin account with detailed onboarding flow
@@ -9,16 +9,14 @@
  * 3. Detect actual NetSwift URL (login page ID is dynamic)
  * 4. Display access instructions with correct URL to user
  * 
+ * Changes in v7.2.1:
+ * - Added handling for "Reconnect datasources" modal when opening app
+ * - Clicks "Go to application" or "Skip configuration" to bypass
+ * 
  * Changes in v7.2.0:
  * - Added dynamic URL detection for NetSwift login page
  * - Opens imported app and detects the actual login page URL
  * - Displays correct URL with dynamic page ID to user
- * 
- * Changes in v7.1.0:
- * - Removed datasource configuration step (included in JSON)
- * - Removed deployment step (handled by application)
- * - Added comprehensive user instructions
- * - Shows NetSwift access URL and credentials
  */
 
 const { chromium } = require('playwright');
@@ -947,8 +945,44 @@ async function getNetSwiftUrl(page) {
         utils.log(step, 'Opening NetSwift application...');
         await appCard.click();
         
+        // Wait for navigation or modal to appear
+        await page.waitForTimeout(3000);
+        
+        // Handle "Reconnect datasources" modal if it appears
+        utils.log(step, 'Checking for datasource reconnection modal...');
+        
+        const skipDatasourceSelectors = [
+            'button:has-text("Go to application")',
+            'button:has-text("Skip configuration")',
+            '[data-testid*="skip"]',
+            'text=Go to application',
+            'text=Skip configuration'
+        ];
+        
+        let modalHandled = false;
+        for (const selector of skipDatasourceSelectors) {
+            try {
+                const button = page.locator(selector).first();
+                if (await button.isVisible({ timeout: 5000 })) {
+                    await button.click();
+                    modalHandled = true;
+                    utils.log(step, `Clicked: ${selector}`);
+                    await page.waitForTimeout(2000);
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+        
+        if (modalHandled) {
+            utils.log(step, 'Datasource modal bypassed');
+        } else {
+            utils.log(step, 'No datasource modal found, continuing...');
+        }
+        
         // Wait for navigation to app
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(3000);
         await page.waitForURL(/\/app\//, { timeout: 30000 });
         
         const appUrl = page.url();
@@ -1235,7 +1269,7 @@ async function deployApplication(page) {
 async function main() {
     console.log('╔═══════════════════════════════════════════════════════════════════╗');
     console.log('║                                                                   ║');
-    console.log('║        Appsmith Automation - NetSwift Installer v7.2.0           ║');
+    console.log('║        Appsmith Automation - NetSwift Installer v7.2.1           ║');
     console.log('║                                                                   ║');
     console.log('╚═══════════════════════════════════════════════════════════════════╝\n');
     
