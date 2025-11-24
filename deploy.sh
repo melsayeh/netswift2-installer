@@ -30,7 +30,7 @@ set -euo pipefail
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="6.1.0"
+readonly SCRIPT_VERSION="6.1.1"
 readonly INSTALL_DIR="/opt/netswift"
 readonly LOG_FILE="/var/log/netswift-install.log"
 
@@ -46,7 +46,7 @@ AUTOMATION_SCRIPT_PATH="${NETSWIFT_AUTOMATION_PATH:-automation/appsmith-automati
 # Docker images
 DOCKER_IMAGE="${NETSWIFT_BACKEND_IMAGE:-melsayeh/netswift-backend}"
 DOCKER_TAG="${NETSWIFT_BACKEND_TAG:-2.0.0}"
-APPSMITH_IMAGE="appsmith/appsmith-ce:latest"
+APPSMITH_IMAGE="appsmith/appsmith-ce:1.88"
 
 # Admin configuration - HARDCODED for simplicity (internal use only)
 APPSMITH_ADMIN_EMAIL="${NETSWIFT_ADMIN_EMAIL:-admin@netswift.com}"
@@ -366,19 +366,161 @@ check_root() {
     log_success "Running as root"
 }
 
+preflight_checks() {
+    log_info "Running pre-flight checks..."
+    
+    # Check disk space (need at least 5GB free)
+    local free_space_mb
+    free_space_mb=$(df /opt 2>/dev/null | tail -1 | awk '{print $4}')
+    local free_space_gb=$((free_space_mb / 1024 / 1024))
+    
+    if [[ ${free_space_gb} -lt 5 ]]; then
+        log_warning "Low disk space: ${free_space_gb}GB available (5GB recommended)"
+        log_warning "Installation may fail if disk space runs out"
+    else
+        log_success "Disk space: ${free_space_gb}GB available"
+    fi
+    
+    # Check memory (need at least 2GB)
+    local total_mem_kb
+    total_mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local total_mem_gb=$((total_mem_kb / 1024 / 1024))
+    
+    if [[ ${total_mem_gb} -lt 2 ]]; then
+        log_warning "Low memory: ${total_mem_gb}GB (2GB recommended)"
+        log_warning "System may be slow or unstable"
+    else
+        log_success "Memory: ${total_mem_gb}GB available"
+    fi
+    
+    # Check if critical ports are available
+    local ports_in_use=()
+    for port in 80 443 8000; do
+        if ss -tulpn 2>/dev/null | grep -q ":${port} " || netstat -tulpn 2>/dev/null | grep -q ":${port} "; then
+            ports_in_use+=("${port}")
+        fi
+    done
+    
+    if [[ ${#ports_in_use[@]} -gt 0 ]]; then
+        log_warning "Ports already in use: ${ports_in_use[*]}"
+        log_warning "NetSwift requires ports 80, 443, and 8000 to be available"
+        log_warning "Existing services on these ports will need to be stopped"
+    else
+        log_success "Required ports (80, 443, 8000) are available"
+    fi
+    
+    # Check for conflicting software
+    local conflicts=()
+    
+    # Check for existing Appsmith installations
+    if systemctl list-units --full --all 2>/dev/null | grep -q appsmith; then
+        conflicts+=("Appsmith service detected")
+    fi
+    
+    if docker ps 2>/dev/null | grep -q appsmith; then
+        conflicts+=("Appsmith container running")
+    fi
+    
+    # Check for Podman (conflicts with Docker)
+    if command_exists podman && systemctl is-active --quiet podman.socket 2>/dev/null; then
+        conflicts+=("Podman service active (may conflict with Docker)")
+    fi
+    
+    if [[ ${#conflicts[@]} -gt 0 ]]; then
+        log_warning "Potential conflicts detected:"
+        for conflict in "${conflicts[@]}"; do
+            log_warning "  - ${conflict}"
+        done
+        log_warning "Installation will attempt to resolve these automatically"
+    fi
+    
+    # Check internet connectivity
+    if ! curl -s --max-time 5 https://google.com > /dev/null 2>&1; then
+        log_error "No internet connection detected"
+        log_error "Internet connection is required for installation"
+        exit 1
+    fi
+    log_success "Internet connection: OK"
+    
+    log_success "Pre-flight checks completed"
+}
+
+cleanup_failed_installation() {
+    log_warning "Cleaning up failed installation..."
+    
+    # Stop any running containers
+    if command_exists docker; then
+        docker stop netswift-backend netswift-appsmith 2>/dev/null || true
+        docker rm netswift-backend netswift-appsmith 2>/dev/null || true
+    fi
+    
+    # Don't remove the entire directory to preserve logs
+    log_info "Installation directory preserved for debugging: ${INSTALL_DIR}"
+    log_info "Check logs at: ${LOG_FILE}"
+}
+
+# Trap errors and cleanup
+trap 'cleanup_failed_installation' ERR
+
+
 install_dependencies() {
     log_info "Installing system dependencies..."
     
     if command_exists apt-get; then
         export DEBIAN_FRONTEND=noninteractive
-        apt-get update -qq
+        
+        # Update package cache
+        apt-get update -qq 2>&1 | tee -a "${LOG_FILE}"
+        
+        # Fix any broken dependencies first
+        log_info "Checking for broken dependencies..."
+        apt-get install -f -y 2>&1 | tee -a "${LOG_FILE}"
+        
+        # Install required packages
         apt-get install -y -qq curl wget git jq ca-certificates gnupg lsb-release \
             2>&1 | tee -a "${LOG_FILE}"
+            
+    elif command_exists dnf; then
+        # For RHEL 9+/Rocky 9+/AlmaLinux 9+
+        
+        # Clean yum/dnf cache
+        dnf clean all 2>&1 | tee -a "${LOG_FILE}"
+        
+        # Check for and resolve any package conflicts
+        log_info "Checking for package conflicts..."
+        dnf check 2>&1 | tee -a "${LOG_FILE}" || true
+        
+        # Install required packages
+        dnf install -y curl wget git jq ca-certificates 2>&1 | tee -a "${LOG_FILE}"
+        
     elif command_exists yum; then
-        yum install -y -q curl wget git jq ca-certificates \
-            2>&1 | tee -a "${LOG_FILE}"
+        # For RHEL 8/CentOS 8
+        
+        # Clean yum cache
+        yum clean all 2>&1 | tee -a "${LOG_FILE}"
+        
+        # Check for and resolve any package conflicts
+        log_info "Checking for package conflicts..."
+        yum check 2>&1 | tee -a "${LOG_FILE}" || true
+        
+        # Install required packages
+        yum install -y curl wget git jq ca-certificates 2>&1 | tee -a "${LOG_FILE}"
+        
     else
         log_error "Unsupported package manager"
+        exit 1
+    fi
+    
+    # Validate critical tools are available
+    local missing_tools=()
+    for tool in curl wget git jq; do
+        if ! command_exists "${tool}"; then
+            missing_tools+=("${tool}")
+        fi
+    done
+    
+    if [[ ${#missing_tools[@]} -gt 0 ]]; then
+        log_error "Failed to install required tools: ${missing_tools[*]}"
         exit 1
     fi
     
@@ -396,7 +538,24 @@ install_nodejs() {
     if command_exists apt-get; then
         curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>&1 | tee -a "${LOG_FILE}"
         apt-get install -y nodejs 2>&1 | tee -a "${LOG_FILE}"
+    elif command_exists dnf; then
+        # For RHEL 9+ / Rocky 9+ / AlmaLinux 9+ systems
+        # Remove old Node.js/npm if present to avoid conflicts
+        if rpm -q nodejs &>/dev/null || rpm -q npm &>/dev/null; then
+            log_info "Removing old Node.js/npm packages..."
+            dnf remove -y nodejs npm 2>&1 | tee -a "${LOG_FILE}"
+        fi
+        
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - 2>&1 | tee -a "${LOG_FILE}"
+        dnf install -y nodejs 2>&1 | tee -a "${LOG_FILE}"
     elif command_exists yum; then
+        # For RHEL 8 / Rocky 8 / CentOS 8 systems
+        # Remove old Node.js/npm if present to avoid conflicts
+        if rpm -q nodejs &>/dev/null || rpm -q npm &>/dev/null; then
+            log_info "Removing old Node.js/npm packages..."
+            yum remove -y nodejs npm 2>&1 | tee -a "${LOG_FILE}"
+        fi
+        
         curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - 2>&1 | tee -a "${LOG_FILE}"
         yum install -y nodejs 2>&1 | tee -a "${LOG_FILE}"
     fi
@@ -406,17 +565,80 @@ install_nodejs() {
 
 install_docker() {
     if command_exists docker; then
-        log_success "Docker already installed: $(docker --version)"
-        return 0
+        # Check if it's a working Docker installation
+        if docker --version &>/dev/null && docker ps &>/dev/null 2>&1; then
+            log_success "Docker already installed: $(docker --version)"
+            return 0
+        else
+            log_warning "Docker command exists but not working, reinstalling..."
+        fi
     fi
     
     log_info "Installing Docker..."
+    
+    # Remove any conflicting Docker packages
+    local conflicting_packages=()
+    
+    if command_exists apt-get; then
+        # Check for conflicting packages on Debian/Ubuntu
+        for pkg in docker docker.io docker-engine containerd runc podman-docker; do
+            if dpkg -l | grep -q "^ii.*${pkg}"; then
+                conflicting_packages+=("${pkg}")
+            fi
+        done
+        
+        if [[ ${#conflicting_packages[@]} -gt 0 ]]; then
+            log_info "Removing conflicting packages: ${conflicting_packages[*]}"
+            apt-get remove -y "${conflicting_packages[@]}" 2>&1 | tee -a "${LOG_FILE}"
+            apt-get autoremove -y 2>&1 | tee -a "${LOG_FILE}"
+        fi
+    elif command_exists dnf; then
+        # Check for conflicting packages on RHEL 9+/Rocky 9+
+        for pkg in docker docker-ce docker-ce-cli containerd.io podman-docker; do
+            if rpm -q "${pkg}" &>/dev/null; then
+                conflicting_packages+=("${pkg}")
+            fi
+        done
+        
+        if [[ ${#conflicting_packages[@]} -gt 0 ]]; then
+            log_info "Removing conflicting packages: ${conflicting_packages[*]}"
+            dnf remove -y "${conflicting_packages[@]}" 2>&1 | tee -a "${LOG_FILE}"
+        fi
+    elif command_exists yum; then
+        # Check for conflicting packages on RHEL 8/CentOS 8
+        for pkg in docker docker-ce docker-ce-cli containerd.io podman-docker; do
+            if rpm -q "${pkg}" &>/dev/null; then
+                conflicting_packages+=("${pkg}")
+            fi
+        done
+        
+        if [[ ${#conflicting_packages[@]} -gt 0 ]]; then
+            log_info "Removing conflicting packages: ${conflicting_packages[*]}"
+            yum remove -y "${conflicting_packages[@]}" 2>&1 | tee -a "${LOG_FILE}"
+        fi
+    fi
+    
+    # Install Docker using official script
     curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
     sh /tmp/get-docker.sh 2>&1 | tee -a "${LOG_FILE}"
     rm /tmp/get-docker.sh
     
-    systemctl enable docker
-    systemctl start docker
+    # Ensure Docker service is enabled and started
+    systemctl enable docker 2>&1 | tee -a "${LOG_FILE}"
+    systemctl start docker 2>&1 | tee -a "${LOG_FILE}"
+    
+    # Wait for Docker to be ready
+    local retries=0
+    while ! docker ps &>/dev/null && [[ ${retries} -lt 10 ]]; do
+        log_info "Waiting for Docker to be ready..."
+        sleep 2
+        ((retries++))
+    done
+    
+    if ! docker ps &>/dev/null; then
+        log_error "Docker failed to start properly"
+        exit 1
+    fi
     
     log_success "Docker installed: $(docker --version)"
 }
@@ -534,10 +756,43 @@ wait_for_services() {
 setup_automation() {
     log_info "Setting up Playwright automation..."
     
+    cd "${INSTALL_DIR}/automation"
+    
+    # Clean any previous npm installation artifacts
+    if [[ -d "node_modules" ]]; then
+        log_info "Cleaning previous npm installation..."
+        rm -rf node_modules package-lock.json 2>&1 | tee -a "${LOG_FILE}"
+    fi
+    
     # Install npm dependencies
     log_info "Installing Playwright npm package (this may take a minute)..."
-    cd "${INSTALL_DIR}/automation"
-    npm install --silent 2>&1 | tee -a "${LOG_FILE}"
+    
+    # Try npm install with retries in case of network issues
+    local npm_retries=0
+    local npm_success=false
+    
+    while [[ ${npm_retries} -lt 3 ]] && [[ "${npm_success}" == "false" ]]; do
+        if npm install --silent 2>&1 | tee -a "${LOG_FILE}"; then
+            npm_success=true
+        else
+            ((npm_retries++))
+            if [[ ${npm_retries} -lt 3 ]]; then
+                log_warning "npm install failed, retrying (${npm_retries}/3)..."
+                sleep 5
+            fi
+        fi
+    done
+    
+    if [[ "${npm_success}" == "false" ]]; then
+        log_error "Failed to install npm dependencies after 3 attempts"
+        exit 1
+    fi
+    
+    # Validate that playwright was installed
+    if [[ ! -d "node_modules/playwright" ]]; then
+        log_error "Playwright package not found after installation"
+        exit 1
+    fi
     
     # Install Chromium browser
     log_info "Installing Chromium browser for Playwright..."
@@ -552,11 +807,57 @@ setup_automation() {
     # They're not strictly needed for headless browser operation
     if [[ "${OS_ID}" =~ ^(rocky|rhel|centos|almalinux)$ ]]; then
         log_info "Detected ${OS_ID}, installing Chromium without system dependencies..."
-        npx playwright install chromium 2>&1 | tee -a "${LOG_FILE}"
+        
+        # Install with retries
+        local browser_retries=0
+        local browser_success=false
+        
+        while [[ ${browser_retries} -lt 3 ]] && [[ "${browser_success}" == "false" ]]; do
+            if npx playwright install chromium 2>&1 | tee -a "${LOG_FILE}"; then
+                browser_success=true
+            else
+                ((browser_retries++))
+                if [[ ${browser_retries} -lt 3 ]]; then
+                    log_warning "Browser install failed, retrying (${browser_retries}/3)..."
+                    sleep 5
+                fi
+            fi
+        done
+        
+        if [[ "${browser_success}" == "false" ]]; then
+            log_error "Failed to install Chromium browser after 3 attempts"
+            exit 1
+        fi
     else
         # For Ubuntu/Debian, use --with-deps
         log_info "Installing Chromium with system dependencies..."
-        npx playwright install --with-deps chromium 2>&1 | tee -a "${LOG_FILE}"
+        
+        # Install with retries
+        local browser_retries=0
+        local browser_success=false
+        
+        while [[ ${browser_retries} -lt 3 ]] && [[ "${browser_success}" == "false" ]]; do
+            if npx playwright install --with-deps chromium 2>&1 | tee -a "${LOG_FILE}"; then
+                browser_success=true
+            else
+                ((browser_retries++))
+                if [[ ${browser_retries} -lt 3 ]]; then
+                    log_warning "Browser install failed, retrying (${browser_retries}/3)..."
+                    sleep 5
+                fi
+            fi
+        done
+        
+        if [[ "${browser_success}" == "false" ]]; then
+            log_error "Failed to install Chromium browser after 3 attempts"
+            exit 1
+        fi
+    fi
+    
+    # Validate Chromium was installed
+    if ! npx playwright --version &>/dev/null; then
+        log_error "Playwright installation validation failed"
+        exit 1
     fi
     
     log_success "Playwright automation setup complete"
@@ -845,47 +1146,161 @@ EOF
     log_success "Deployment info saved to ${INSTALL_DIR}/deployment-info.txt"
 }
 
+validate_installation() {
+    log_info "Validating installation..."
+    
+    local validation_passed=true
+    local validation_warnings=()
+    
+    # 1. Check Docker is running
+    if ! docker ps &>/dev/null; then
+        log_error "Docker is not running"
+        validation_passed=false
+    else
+        log_success "Docker: Running"
+    fi
+    
+    # 2. Check containers are running
+    local backend_running=false
+    local appsmith_running=false
+    
+    if docker ps --format '{{.Names}}' | grep -q "^netswift-backend$"; then
+        backend_running=true
+        log_success "Backend container: Running"
+    else
+        log_error "Backend container: Not running"
+        validation_passed=false
+    fi
+    
+    if docker ps --format '{{.Names}}' | grep -q "^netswift-appsmith$"; then
+        appsmith_running=true
+        log_success "Appsmith container: Running"
+    else
+        log_error "Appsmith container: Not running"
+        validation_passed=false
+    fi
+    
+    # 3. Check container health status
+    if [[ "${backend_running}" == "true" ]]; then
+        local backend_health
+        backend_health=$(docker inspect --format='{{.State.Health.Status}}' netswift-backend 2>/dev/null || echo "none")
+        
+        if [[ "${backend_health}" == "healthy" ]]; then
+            log_success "Backend health: Healthy"
+        elif [[ "${backend_health}" == "starting" ]]; then
+            validation_warnings+=("Backend health: Still starting")
+        else
+            validation_warnings+=("Backend health: ${backend_health}")
+        fi
+    fi
+    
+    if [[ "${appsmith_running}" == "true" ]]; then
+        local appsmith_health
+        appsmith_health=$(docker inspect --format='{{.State.Health.Status}}' netswift-appsmith 2>/dev/null || echo "none")
+        
+        if [[ "${appsmith_health}" == "healthy" ]]; then
+            log_success "Appsmith health: Healthy"
+        elif [[ "${appsmith_health}" == "starting" ]]; then
+            validation_warnings+=("Appsmith health: Still starting")
+        else
+            validation_warnings+=("Appsmith health: ${appsmith_health}")
+        fi
+    fi
+    
+    # 4. Check ports are accessible
+    if curl -s --max-time 5 "http://localhost:8000/health" > /dev/null 2>&1; then
+        log_success "Backend API: Accessible"
+    else
+        validation_warnings+=("Backend API: Not yet accessible")
+    fi
+    
+    if curl -s --max-time 5 "http://localhost/api/v1/health" > /dev/null 2>&1; then
+        log_success "Appsmith: Accessible"
+    else
+        validation_warnings+=("Appsmith: Not yet accessible")
+    fi
+    
+    # 5. Check NetSwift URL was saved
+    if [[ -f "${INSTALL_DIR}/netswift-url.txt" ]]; then
+        log_success "NetSwift URL: Saved"
+    else
+        validation_warnings+=("NetSwift URL: Not saved (automation may have failed)")
+    fi
+    
+    # 6. Check Node.js version
+    local node_version
+    node_version=$(node --version 2>/dev/null | cut -d. -f1 | sed 's/v//')
+    if [[ ${node_version} -ge 18 ]]; then
+        log_success "Node.js: v${node_version}.x"
+    else
+        validation_warnings+=("Node.js: v${node_version}.x (expected 18+)")
+    fi
+    
+    # Display warnings
+    if [[ ${#validation_warnings[@]} -gt 0 ]]; then
+        echo ""
+        log_warning "Validation warnings:"
+        for warning in "${validation_warnings[@]}"; do
+            log_warning "  - ${warning}"
+        done
+        log_info "Services may still be starting - wait 1-2 minutes"
+    fi
+    
+    # Final validation result
+    if [[ "${validation_passed}" == "true" ]]; then
+        log_success "Installation validation: PASSED"
+    else
+        log_error "Installation validation: FAILED"
+        log_error "Check logs: ${LOG_FILE}"
+        exit 1
+    fi
+}
+
 #═══════════════════════════════════════════════════════════════════════════
 # INSTALLATION FUNCTION
 #═══════════════════════════════════════════════════════════════════════════
 
 install_netswift() {
-    log_step "1/12" "Checking prerequisites"
+    log_step "1/13" "Checking prerequisites"
     check_root
+    preflight_checks
     
-    log_step "2/12" "Installing system dependencies"
+    log_step "2/13" "Installing system dependencies"
     install_dependencies
     
-    log_step "3/12" "Installing Node.js"
+    log_step "3/13" "Installing Node.js"
     install_nodejs
     
-    log_step "4/12" "Installing Docker"
+    log_step "4/13" "Installing Docker"
     install_docker
     
-    log_step "5/12" "Setting up installation directory"
+    log_step "5/13" "Setting up installation directory"
     setup_installation_directory
     
-    log_step "6/12" "Downloading application files from GitHub"
+    log_step "6/13" "Downloading application files from GitHub"
     download_application_files
     
-    log_step "7/12" "Creating Docker configuration"
+    log_step "7/13" "Creating Docker configuration"
     create_docker_compose
     
-    log_step "8/12" "Deploying containers"
+    log_step "8/13" "Deploying containers"
     deploy_containers
     
-    log_step "9/12" "Waiting for services to be healthy"
+    log_step "9/13" "Waiting for services to be healthy"
     wait_for_services
     
-    log_step "10/12" "Setting up Playwright automation"
+    log_step "10/13" "Setting up Playwright automation"
     setup_automation
     
-    log_step "11/12" "Running automation (2-3 minutes)"
+    log_step "11/13" "Running automation (2-3 minutes)"
     run_automation
     
-    log_step "12/12" "Finalizing installation"
+    log_step "12/13" "Finalizing installation"
     create_management_scripts
     save_deployment_info
+    
+    log_step "13/13" "Validating installation"
+    validate_installation
     
     local server_ip
     server_ip=$(get_server_ip)
