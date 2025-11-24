@@ -1427,6 +1427,17 @@ async function main() {
         
         success = true;
         
+        // Save NetSwift URL to file for installer script to read
+        if (netswiftUrl) {
+            const urlFile = '/opt/netswift/netswift-url.txt';
+            try {
+                fs.writeFileSync(urlFile, netswiftUrl);
+                utils.log('INFO', `Saved NetSwift URL to ${urlFile}`);
+            } catch (e) {
+                utils.log('INFO', 'Could not save URL file (non-critical)');
+            }
+        }
+        
         // Get server IP for instructions
         const serverIp = config.appsmithUrl.replace('http://', '').replace('https://', '').split(':')[0];
         
