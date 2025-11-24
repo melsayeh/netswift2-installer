@@ -597,6 +597,16 @@ install_nodejs() {
 }
 
 install_docker() {
+    if grep -qi "rocky" /etc/os-release; then
+    log_info "Rocky Linux detected, installing Docker using RHEL repo..."
+    dnf -y install dnf-plugins-core
+    dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+    sed -i 's/$releasever/9/g' /etc/yum.repos.d/docker-ce.repo
+    dnf -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    systemctl enable --now docker
+    log_success "Docker installed for Rocky Linux"
+    return
+  fi
     if command_exists docker; then
         # Check if it's a working Docker installation
         if docker --version &>/dev/null && docker ps &>/dev/null 2>&1; then
