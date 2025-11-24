@@ -896,29 +896,20 @@ async function getNetSwiftUrl(page) {
     utils.log(step, 'Detecting NetSwift application URL...');
     
     try {
-        // CRITICAL: After import, modal is dismissed but page needs time to reload
-        // Force navigation to applications page to ensure fresh state
-        utils.log(step, 'Navigating to applications page...');
-        await page.goto(`${config.appsmithUrl}/applications`, {
-            waitUntil: 'domcontentloaded',
-            timeout: 30000
-        });
-        
-        // Wait for page to fully load after import
-        utils.log(step, 'Waiting for page to fully load...');
-        await page.waitForTimeout(3000);
-        
-        // Wait for network to be idle (page finished loading)
-        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {
-            utils.log(step, 'Network idle timeout, continuing...');
-        });
-        
-        // Additional wait for any animations/rendering
-        await page.waitForTimeout(2000);
+        // Navigate to applications page if not already there
+        const currentUrl = page.url();
+        if (!currentUrl.includes('/applications')) {
+            utils.log(step, 'Navigating to applications page...');
+            await page.goto(`${config.appsmithUrl}/applications`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+            await page.waitForTimeout(3000);
+        }
         
         utils.log(step, 'Checking for datasource reconnection modal...');
         
-        // Handle modal if it reappears after navigation
+        // Handle "Go to application" modal - this may redirect us directly to the app
         const skipDatasourceSelectors = [
             'button:has-text("Go to application")',
             'button:has-text("Skip configuration")',
@@ -927,7 +918,7 @@ async function getNetSwiftUrl(page) {
             'text=Skip configuration',
             '[data-testid="reconnect-datasource-modal"] button[aria-label="Close"]',
             '[role="dialog"] button:has-text("Close")',
-            '.ads-v2-modal__content-header-close-button' // Additional close button selector
+            '.ads-v2-modal__content-header-close-button'
         ];
         
         let modalHandled = false;
@@ -935,10 +926,13 @@ async function getNetSwiftUrl(page) {
             try {
                 const button = page.locator(selector).first();
                 if (await button.isVisible({ timeout: 2000 })) {
+                    utils.log(step, `Found modal button: ${selector}`);
                     await button.click();
                     modalHandled = true;
-                    utils.log(step, `Dismissed modal with: ${selector}`);
-                    await page.waitForTimeout(2000);
+                    utils.log(step, `Clicked modal button: ${selector}`);
+                    
+                    // Wait for any navigation that might occur
+                    await page.waitForTimeout(3000);
                     break;
                 }
             } catch (e) {
@@ -946,15 +940,74 @@ async function getNetSwiftUrl(page) {
             }
         }
         
-        if (modalHandled) {
-            utils.log(step, 'Modal dismissed, waiting for page to stabilize...');
-            await page.waitForTimeout(3000);
-            await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
-        } else {
-            utils.log(step, 'No modal blocking access');
+        // CRITICAL: Check if modal action opened the app directly
+        const urlAfterModal = page.url();
+        utils.log(step, `Current URL after modal: ${urlAfterModal}`);
+        
+        if (urlAfterModal.includes('/app/')) {
+            utils.log(step, '✓ Modal opened app directly! Extracting URL from address bar...');
+            
+            // We're already on the app page, extract the URL
+            let netswiftUrl = urlAfterModal;
+            
+            // Check if we're already on login page
+            if (urlAfterModal.includes('loginpage-')) {
+                // Extract clean URL: remove /edit and query params
+                netswiftUrl = urlAfterModal.replace(/\/edit.*$/, '').split('?')[0];
+                utils.log(step, `Already on login page: ${netswiftUrl}`);
+            } else {
+                // Try to navigate to login page
+                utils.log(step, 'Looking for login page in navigation...');
+                await page.waitForTimeout(2000);
+                
+                const loginPageSelectors = [
+                    'text=loginpage',
+                    'text=LoginPage',
+                    'text=Login',
+                    '[class*="page"]:has-text("login" i)',
+                    '[class*="t--page-switch-tab"]:has-text("login" i)'
+                ];
+                
+                let loginPageFound = false;
+                for (const selector of loginPageSelectors) {
+                    try {
+                        const loginLink = page.locator(selector).first();
+                        if (await loginLink.isVisible({ timeout: 3000 })) {
+                            utils.log(step, `Found login page link: ${selector}`);
+                            await loginLink.click();
+                            await page.waitForTimeout(2000);
+                            await page.waitForURL(/loginpage-/, { timeout: 10000 }).catch(() => {});
+                            netswiftUrl = page.url().replace(/\/edit.*$/, '').split('?')[0];
+                            loginPageFound = true;
+                            utils.log(step, `Navigated to login page: ${netswiftUrl}`);
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+                
+                if (!loginPageFound) {
+                    // Use current app URL as fallback
+                    netswiftUrl = urlAfterModal.replace(/\/edit.*$/, '').split('?')[0];
+                    utils.log(step, `Using current page URL: ${netswiftUrl}`);
+                }
+            }
+            
+            await utils.takeScreenshot(page, 'netswift-url-detected');
+            utils.success(step, `NetSwift URL detected: ${netswiftUrl}`);
+            return netswiftUrl;
         }
         
-        // Now look for the NetSwift app card with retries
+        // Modal didn't open app, so we need to find and click app card
+        utils.log(step, 'Modal dismissed, still on applications page');
+        utils.log(step, 'Waiting for page to stabilize...');
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+            utils.log(step, 'Network idle timeout, continuing...');
+        });
+        
+        // Look for the NetSwift app card
         utils.log(step, 'Looking for NetSwift application card...');
         
         const appSelectors = [
@@ -963,7 +1016,7 @@ async function getNetSwiftUrl(page) {
             '[class*="app-card"]:has-text("NetSwift")',
             '[class*="app-card"]:has-text("netswift")',
             '[data-testid*="application-card"]',
-            // Fallback: get first/most recent app (usually the last imported one)
+            // Fallback: get first/most recent app
             '[class*="application-card"]',
             '[class*="app-card"]'
         ];
@@ -1015,8 +1068,7 @@ async function getNetSwiftUrl(page) {
         try {
             await page.waitForURL(/\/app\//, { timeout: 30000 });
         } catch (e) {
-            // If URL doesn't change, we might already be on the app page
-            utils.log(step, 'URL did not change, checking current page...');
+            utils.log(step, 'URL did not change as expected, checking current page...');
         }
         
         const appUrl = page.url();
