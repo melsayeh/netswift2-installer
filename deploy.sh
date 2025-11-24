@@ -54,7 +54,7 @@ AUTOMATION_SCRIPT_PATH="${NETSWIFT_AUTOMATION_PATH:-automation/appsmith-automati
 # Docker images
 DOCKER_IMAGE="${NETSWIFT_BACKEND_IMAGE:-melsayeh/netswift-backend}"
 DOCKER_TAG="${NETSWIFT_BACKEND_TAG:-2.0.0}"
-APPSMITH_IMAGE="appsmith/appsmith-ce:latest"
+APPSMITH_IMAGE="appsmith/appsmith-ce:1.88"
 
 # Docker Hub authentication (for private repository access)
 DOCKER_HUB_USERNAME="${DOCKER_HUB_USERNAME:-melsayeh}"
