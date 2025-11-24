@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # NetSwift ULTIMATE One-Liner Deployment
-# Version: 6.2.0 - Private Repository Support
+# Version: 6.2.1 - Bug Fix Release
 # 
 # Everything is downloaded from GitHub - user just runs ONE command!
 #
@@ -18,6 +18,10 @@
 #   5. Deploys containers (Appsmith + Backend)
 #   6. Runs Playwright automation (admin, import, datasource, deploy)
 #   7. DONE! Zero manual steps.
+#
+# NEW in 6.2.1:
+#   • Fixed: Automatic package.json creation for npm install
+#   • Fixed: npm install no longer fails silently
 #
 # NEW in 6.2.0:
 #   • Docker Hub authentication for private repositories
@@ -38,7 +42,7 @@ set -euo pipefail
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="6.2.0"
+readonly SCRIPT_VERSION="6.2.1"
 readonly INSTALL_DIR="/opt/netswift"
 readonly LOG_FILE="/var/log/netswift-install.log"
 
@@ -861,6 +865,28 @@ setup_automation() {
     log_info "Setting up Playwright automation..."
     
     cd "${INSTALL_DIR}/automation"
+    
+    # Create package.json if it doesn't exist
+    if [[ ! -f "package.json" ]]; then
+        log_info "Creating package.json..."
+        cat > package.json << 'EOF'
+{
+  "name": "netswift-automation",
+  "version": "1.0.0",
+  "description": "Appsmith automation for NetSwift",
+  "main": "automate.js",
+  "scripts": {
+    "start": "node automate.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
+EOF
+        log_success "package.json created"
+    else
+        log_info "package.json already exists"
+    fi
     
     # Clean any previous npm installation artifacts
     if [[ -d "node_modules" ]]; then
