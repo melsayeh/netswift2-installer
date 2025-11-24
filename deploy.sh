@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # NetSwift ULTIMATE One-Liner Deployment
-# Version: 6.1.0 - Playwright Edition
+# Version: 6.2.0 - Private Repository Support
 # 
 # Everything is downloaded from GitHub - user just runs ONE command!
 #
@@ -14,9 +14,17 @@
 #   1. Downloads netswift.json from your GitHub repo
 #   2. Downloads automation script from your GitHub repo
 #   3. Installs all dependencies (Docker, Node.js)
-#   4. Deploys containers (Appsmith + Backend)
-#   5. Runs Playwright automation (admin, import, datasource, deploy)
-#   6. DONE! Zero manual steps.
+#   4. Authenticates with Docker Hub (for private images)
+#   5. Deploys containers (Appsmith + Backend)
+#   6. Runs Playwright automation (admin, import, datasource, deploy)
+#   7. DONE! Zero manual steps.
+#
+# NEW in 6.2.0:
+#   • Docker Hub authentication for private repositories
+#   • Interactive token prompt with secure input
+#   • Environment variable support for automation
+#   • Comprehensive dependency conflict resolution
+#   • Pre-flight checks and installation validation
 #
 # NEW in 6.1.0:
 #   • Playwright automation for superior reliability
@@ -30,7 +38,7 @@ set -euo pipefail
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="6.1.1"
+readonly SCRIPT_VERSION="6.2.0"
 readonly INSTALL_DIR="/opt/netswift"
 readonly LOG_FILE="/var/log/netswift-install.log"
 
@@ -47,6 +55,10 @@ AUTOMATION_SCRIPT_PATH="${NETSWIFT_AUTOMATION_PATH:-automation/appsmith-automati
 DOCKER_IMAGE="${NETSWIFT_BACKEND_IMAGE:-melsayeh/netswift-backend}"
 DOCKER_TAG="${NETSWIFT_BACKEND_TAG:-2.0.0}"
 APPSMITH_IMAGE="appsmith/appsmith-ce:1.88"
+
+# Docker Hub authentication (for private repository access)
+DOCKER_HUB_USERNAME="${DOCKER_HUB_USERNAME:-melsayeh}"
+DOCKER_HUB_TOKEN="${DOCKER_HUB_TOKEN:-}"  # Can be set via environment variable
 
 # Admin configuration - HARDCODED for simplicity (internal use only)
 APPSMITH_ADMIN_EMAIL="${NETSWIFT_ADMIN_EMAIL:-admin@netswift.com}"
@@ -176,9 +188,20 @@ Optional Overrides:
   --headless BOOL            Run browser headless (default: true)
   --help                     Show this help
 
+Docker Hub Authentication:
+  The installation will prompt for your Docker Hub access token to pull the
+  private backend image. You can also provide it via environment variable:
+  
+  export DOCKER_HUB_TOKEN="your_token_here"
+
 Examples:
 
   # Default (no parameters - recommended):
+  # You will be prompted for Docker Hub token during installation
+  curl -fsSL https://raw.githubusercontent.com/melsayeh/netswift2-installer/main/deploy.sh | sudo bash
+
+  # With Docker Hub token (non-interactive):
+  export DOCKER_HUB_TOKEN="dckr_pat_xxxxxxxxxxxxxxxxxxxxx"
   curl -fsSL https://raw.githubusercontent.com/melsayeh/netswift2-installer/main/deploy.sh | sudo bash
 
   # Custom admin password:
@@ -210,6 +233,7 @@ Environment Variables (alternative to command line):
   NETSWIFT_BACKEND_IMAGE     (default: melsayeh/netswift-backend)
   NETSWIFT_BACKEND_TAG       (default: 2.0.0)
   NETSWIFT_HEADLESS          (default: true)
+  DOCKER_HUB_TOKEN           Docker Hub access token (for private image)
 
 After Deployment:
   Access:  http://YOUR_SERVER_IP
@@ -712,6 +736,75 @@ networks:
 COMPOSE_EOF
     
     log_success "Docker Compose configuration created with timezone: ${host_timezone}"
+}
+
+docker_login() {
+    log_info "Authenticating with Docker Hub..."
+    
+    # Check if already logged in
+    if docker info 2>/dev/null | grep -q "Username: ${DOCKER_HUB_USERNAME}"; then
+        log_success "Already logged in to Docker Hub as ${DOCKER_HUB_USERNAME}"
+        return 0
+    fi
+    
+    # If token is provided via environment variable, use it
+    if [[ -n "${DOCKER_HUB_TOKEN}" ]]; then
+        log_info "Using Docker Hub token from environment variable..."
+        
+        if echo "${DOCKER_HUB_TOKEN}" | docker login -u "${DOCKER_HUB_USERNAME}" --password-stdin 2>&1 | tee -a "${LOG_FILE}"; then
+            log_success "Docker Hub authentication successful"
+            return 0
+        else
+            log_error "Docker Hub authentication failed with provided token"
+            exit 1
+        fi
+    fi
+    
+    # Interactive mode - prompt for token
+    echo ""
+    echo -e "${CYAN}${BOLD}╔═══════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}${BOLD}║                                                                           ║${NC}"
+    echo -e "${CYAN}${BOLD}║                     Docker Hub Authentication                             ║${NC}"
+    echo -e "${CYAN}${BOLD}║                                                                           ║${NC}"
+    echo -e "${CYAN}${BOLD}╚═══════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${YELLOW}The NetSwift backend image is hosted on a private Docker Hub repository.${NC}"
+    echo -e "${YELLOW}You need to authenticate to pull the image.${NC}"
+    echo ""
+    echo -e "Username: ${BLUE}${DOCKER_HUB_USERNAME}${NC}"
+    echo ""
+    echo -e "${YELLOW}Please enter your Docker Hub Access Token:${NC}"
+    echo -e "${CYAN}(The token will not be displayed as you type)${NC}"
+    echo ""
+    
+    # Read token securely (without echoing)
+    local token
+    read -s -p "Access Token: " token
+    echo ""
+    echo ""
+    
+    if [[ -z "${token}" ]]; then
+        log_error "No token provided"
+        exit 1
+    fi
+    
+    log_info "Authenticating with Docker Hub as ${DOCKER_HUB_USERNAME}..."
+    
+    if echo "${token}" | docker login -u "${DOCKER_HUB_USERNAME}" --password-stdin 2>&1 | tee -a "${LOG_FILE}"; then
+        log_success "Docker Hub authentication successful"
+        
+        # Save token for future use (optional, for automation)
+        # Note: This is saved securely with restricted permissions
+        mkdir -p "${INSTALL_DIR}"
+        echo "${token}" > "${INSTALL_DIR}/.docker-token"
+        chmod 600 "${INSTALL_DIR}/.docker-token"
+        
+        return 0
+    else
+        log_error "Docker Hub authentication failed"
+        log_error "Please check your access token and try again"
+        exit 1
+    fi
 }
 
 deploy_containers() {
@@ -1261,45 +1354,48 @@ validate_installation() {
 #═══════════════════════════════════════════════════════════════════════════
 
 install_netswift() {
-    log_step "1/13" "Checking prerequisites"
+    log_step "1/14" "Checking prerequisites"
     check_root
     preflight_checks
     
-    log_step "2/13" "Installing system dependencies"
+    log_step "2/14" "Installing system dependencies"
     install_dependencies
     
-    log_step "3/13" "Installing Node.js"
+    log_step "3/14" "Installing Node.js"
     install_nodejs
     
-    log_step "4/13" "Installing Docker"
+    log_step "4/14" "Installing Docker"
     install_docker
     
-    log_step "5/13" "Setting up installation directory"
+    log_step "5/14" "Setting up installation directory"
     setup_installation_directory
     
-    log_step "6/13" "Downloading application files from GitHub"
+    log_step "6/14" "Downloading application files from GitHub"
     download_application_files
     
-    log_step "7/13" "Creating Docker configuration"
+    log_step "7/14" "Creating Docker configuration"
     create_docker_compose
     
-    log_step "8/13" "Deploying containers"
+    log_step "8/14" "Authenticating with Docker Hub"
+    docker_login
+    
+    log_step "9/14" "Deploying containers"
     deploy_containers
     
-    log_step "9/13" "Waiting for services to be healthy"
+    log_step "10/14" "Waiting for services to be healthy"
     wait_for_services
     
-    log_step "10/13" "Setting up Playwright automation"
+    log_step "11/14" "Setting up Playwright automation"
     setup_automation
     
-    log_step "11/13" "Running automation (2-3 minutes)"
+    log_step "12/14" "Running automation (2-3 minutes)"
     run_automation
     
-    log_step "12/13" "Finalizing installation"
+    log_step "13/14" "Finalizing installation"
     create_management_scripts
     save_deployment_info
     
-    log_step "13/13" "Validating installation"
+    log_step "14/14" "Validating installation"
     validate_installation
     
     local server_ip
