@@ -946,14 +946,14 @@ EOF
     # For RHEL-based systems (Rocky, CentOS, AlmaLinux, RHEL), skip system deps
     # They're not strictly needed for headless browser operation
     if [[ "${OS_ID}" =~ ^(rocky|rhel|centos|almalinux)$ ]]; then
-        log_info "Detected ${OS_ID}, installing Chromium without system dependencies..."
+        log_info "Detected ${OS_ID}, installing Chromium with system dependencies..."
         
         # Install with retries
         local browser_retries=0
         local browser_success=false
         
         while [[ ${browser_retries} -lt 3 ]] && [[ "${browser_success}" == "false" ]]; do
-            if npx playwright install chromium 2>&1 | tee -a "${LOG_FILE}"; then
+            if npx playwright install chromium --with-deps 2>&1 | tee -a "${LOG_FILE}"; then
                 browser_success=true
             else
                 ((browser_retries++))
