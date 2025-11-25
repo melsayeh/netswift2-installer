@@ -953,7 +953,7 @@ EOF
         local browser_success=false
         
         while [[ ${browser_retries} -lt 3 ]] && [[ "${browser_success}" == "false" ]]; do
-            if npx playwright install chromium --with-deps 2>&1 | tee -a "${LOG_FILE}"; then
+            if npx playwright install --with-deps chromium 2>&1 | tee -a "${LOG_FILE}"; then
                 browser_success=true
             else
                 ((browser_retries++))
