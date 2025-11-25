@@ -965,10 +965,10 @@ EOF
                 libXext \
                 libXfixes \
                 libXi \
-                libXkbcommon \
+                libxkbcommon \
                 libXrandr \
                 libXrender \
-                libXshmfence \
+                libxshmfence \
                 libXtst \
                 mesa-libgbm \
                 nspr \
