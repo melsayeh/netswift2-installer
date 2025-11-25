@@ -958,17 +958,17 @@ EOF
                 gtk3 \
                 libdrm \
                 libgbm \
-                libxcb \
-                libxcomposite \
-                libxcursor \
-                libxdamage \
+                libXcb \
+                libXcomposite \
+                libXcursor \
+                libXdamage \
                 libXext \
-                libxfixes \
-                libxi \
-                libxkbcommon \
-                libxrandr \
+                libXfixes \
+                libXi \
+                libXkbcommon \
+                libXrandr \
                 libXrender \
-                libxshmfence \
+                libXshmfence \
                 libXtst \
                 mesa-libgbm \
                 nspr \
