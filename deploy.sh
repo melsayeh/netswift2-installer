@@ -958,7 +958,7 @@ EOF
                 gtk3 \
                 libdrm \
                 libgbm \
-                libXcb \
+                libxcb \
                 libXcomposite \
                 libXcursor \
                 libXdamage \
