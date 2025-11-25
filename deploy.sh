@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # NetSwift ULTIMATE One-Liner Deployment
-# Version: 6.2.1 - Bug Fix Release
+# Version: 6.2.2 - Rocky Linux Chromium Fix
 # 
 # Everything is downloaded from GitHub - user just runs ONE command!
 #
@@ -18,6 +18,11 @@
 #   5. Deploys containers (Appsmith + Backend)
 #   6. Runs Playwright automation (admin, import, datasource, deploy)
 #   7. DONE! Zero manual steps.
+#
+# NEW in 6.2.2:
+#   • Fixed: Chromium system dependencies for Rocky Linux/RHEL
+#   • Added: Automatic installation of required libraries (gtk3, nss, etc.)
+#   • Fixed: Playwright now works properly on Rocky/RHEL/CentOS/AlmaLinux
 #
 # NEW in 6.2.1:
 #   • Fixed: Automatic package.json creation for npm install
@@ -42,7 +47,7 @@ set -euo pipefail
 # CONFIGURATION
 #═══════════════════════════════════════════════════════════════════════════
 
-readonly SCRIPT_VERSION="6.2.1"
+readonly SCRIPT_VERSION="6.2.2"
 readonly INSTALL_DIR="/opt/netswift"
 readonly LOG_FILE="/var/log/netswift-install.log"
 
@@ -597,16 +602,6 @@ install_nodejs() {
 }
 
 install_docker() {
-    if grep -qi "rocky" /etc/os-release; then
-    log_info "Rocky Linux detected, installing Docker using RHEL repo..."
-    dnf -y install dnf-plugins-core
-    dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
-    sed -i 's/$releasever/9/g' /etc/yum.repos.d/docker-ce.repo
-    dnf -y install docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    systemctl enable --now docker
-    log_success "Docker installed for Rocky Linux"
-    return
-  fi
     if command_exists docker; then
         # Check if it's a working Docker installation
         if docker --version &>/dev/null && docker ps &>/dev/null 2>&1; then
@@ -943,17 +938,89 @@ EOF
         OS_ID="${ID}"
     fi
     
-    # For RHEL-based systems (Rocky, CentOS, AlmaLinux, RHEL), skip system deps
-    # They're not strictly needed for headless browser operation
+    # For RHEL-based systems (Rocky, CentOS, AlmaLinux, RHEL), install dependencies manually
+    # Playwright's --with-deps doesn't support these systems properly
     if [[ "${OS_ID}" =~ ^(rocky|rhel|centos|almalinux)$ ]]; then
-        log_info "Detected ${OS_ID}, installing Chromium with system dependencies..."
+        log_info "Detected ${OS_ID}, installing Chromium system dependencies..."
         
-        # Install with retries
+        # Install required system libraries for Chromium
+        if command_exists dnf; then
+            dnf install -y \
+                alsa-lib \
+                atk \
+                at-spi2-atk \
+                at-spi2-core \
+                cairo \
+                cups-libs \
+                dbus-glib \
+                expat \
+                glib2 \
+                gtk3 \
+                libdrm \
+                libgbm \
+                libxcb \
+                libxcomposite \
+                libxcursor \
+                libxdamage \
+                libXext \
+                libxfixes \
+                libxi \
+                libxkbcommon \
+                libxrandr \
+                libXrender \
+                libxshmfence \
+                libXtst \
+                mesa-libgbm \
+                nspr \
+                nss \
+                nss-util \
+                pango \
+                vulkan-loader \
+                2>&1 | tee -a "${LOG_FILE}"
+        elif command_exists yum; then
+            yum install -y \
+                alsa-lib \
+                atk \
+                at-spi2-atk \
+                at-spi2-core \
+                cairo \
+                cups-libs \
+                dbus-glib \
+                expat \
+                glib2 \
+                gtk3 \
+                libdrm \
+                libgbm \
+                libxcb \
+                libxcomposite \
+                libxcursor \
+                libxdamage \
+                libXext \
+                libxfixes \
+                libxi \
+                libxkbcommon \
+                libxrandr \
+                libXrender \
+                libxshmfence \
+                libXtst \
+                mesa-libgbm \
+                nspr \
+                nss \
+                nss-util \
+                pango \
+                vulkan-loader \
+                2>&1 | tee -a "${LOG_FILE}"
+        fi
+        
+        log_success "System dependencies installed"
+        log_info "Installing Chromium browser..."
+        
+        # Install Chromium without --with-deps (dependencies already installed)
         local browser_retries=0
         local browser_success=false
         
         while [[ ${browser_retries} -lt 3 ]] && [[ "${browser_success}" == "false" ]]; do
-            if npx playwright install --with-deps chromium 2>&1 | tee -a "${LOG_FILE}"; then
+            if npx playwright install chromium 2>&1 | tee -a "${LOG_FILE}"; then
                 browser_success=true
             else
                 ((browser_retries++))
